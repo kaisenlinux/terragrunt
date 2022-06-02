@@ -1,0 +1,5 @@
+terragrunt (0.37.1-1kaisen) kaisen-packages; urgency=medium
+
+  * First packaging for Kaisen Linux
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Thu, 02 Jun 2022 10:30:16 +0200
