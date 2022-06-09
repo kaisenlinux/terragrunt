@@ -1,3 +1,10 @@
+terragrunt (0.37.2-1kaisen) kaisen-packages; urgency=medium
+
+  * Import 0.37.2 version
+  * Update the quilt patch
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Thu, 09 Jun 2022 16:32:09 +0200
+
 terragrunt (0.37.1-1kaisen) kaisen-packages; urgency=medium
 
   * First packaging for Kaisen Linux
