@@ -439,6 +439,30 @@ _terragrunt_rendered.json_
 
 You can use the CLI option `--terragrunt-json-out` to configure where terragrunt renders out the json representation.
 
+To generate json with metadata can be specified argument `--with-metadata` which will add metadata to the json output.
+
+Example:
+```
+{
+  "inputs": {
+    "aws_region": {
+      "metadata": {
+        "found_in_file": "/example/terragrunt.hcl"
+      },
+      "value": "us-east-1"
+    }
+  },
+  "locals": {
+    "aws_region": {
+      "metadata": {
+        "found_in_file": "/example/terragrunt.hcl"
+      },
+      "value": "us-east-1"
+    }
+  }
+  // NOTE: other attributes are omitted for brevity
+}
+```
 
 ## CLI options
 

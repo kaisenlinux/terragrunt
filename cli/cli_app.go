@@ -58,6 +58,7 @@ const (
 	optTerragruntJSONOut                        = "terragrunt-json-out"
 	optTerragruntModulesThatInclude             = "terragrunt-modules-that-include"
 	optTerragruntFetchDependencyOutputFromState = "terragrunt-fetch-dependency-output-from-state"
+	optTerragruntOutputWithMetadata             = "with-metadata"
 )
 
 var allTerragruntBooleanOpts = []string{
@@ -74,6 +75,7 @@ var allTerragruntBooleanOpts = []string{
 	optTerragruntStrictInclude,
 	optTerragruntDebug,
 	optTerragruntFetchDependencyOutputFromState,
+	optTerragruntOutputWithMetadata,
 }
 var allTerragruntStringOpts = []string{
 	optTerragruntConfig,
@@ -887,6 +889,7 @@ func runTerraformWithRetry(terragruntOptions *options.TerragruntOptions) error {
 				terragruntOptions.Logger.Infof("Encountered an error eligible for retrying. Sleeping %v before retrying.\n", terragruntOptions.RetrySleepIntervalSec)
 				time.Sleep(terragruntOptions.RetrySleepIntervalSec)
 			} else {
+				terragruntOptions.Logger.Errorf("Terraform invocation failed in %s", terragruntOptions.WorkingDir)
 				return tferr
 			}
 		} else {
