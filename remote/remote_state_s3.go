@@ -34,20 +34,21 @@ const (
 type ExtendedRemoteStateConfigS3 struct {
 	remoteStateConfigS3 RemoteStateConfigS3
 
-	S3BucketTags                map[string]string `mapstructure:"s3_bucket_tags"`
-	DynamotableTags             map[string]string `mapstructure:"dynamodb_table_tags"`
-	SkipBucketVersioning        bool              `mapstructure:"skip_bucket_versioning"`
-	SkipBucketSSEncryption      bool              `mapstructure:"skip_bucket_ssencryption"`
-	SkipBucketAccessLogging     bool              `mapstructure:"skip_bucket_accesslogging"`
-	SkipBucketRootAccess        bool              `mapstructure:"skip_bucket_root_access"`
-	SkipBucketEnforcedTLS       bool              `mapstructure:"skip_bucket_enforced_tls"`
-	DisableBucketUpdate         bool              `mapstructure:"disable_bucket_update"`
-	EnableLockTableSSEncryption bool              `mapstructure:"enable_lock_table_ssencryption"`
-	DisableAWSClientChecksums   bool              `mapstructure:"disable_aws_client_checksums"`
-	AccessLoggingBucketName     string            `mapstructure:"accesslogging_bucket_name"`
-	AccessLoggingTargetPrefix   string            `mapstructure:"accesslogging_target_prefix"`
-	BucketSSEAlgorithm          string            `mapstructure:"bucket_sse_algorithm"`
-	BucketSSEKMSKeyID           string            `mapstructure:"bucket_sse_kms_key_id"`
+	S3BucketTags                   map[string]string `mapstructure:"s3_bucket_tags"`
+	DynamotableTags                map[string]string `mapstructure:"dynamodb_table_tags"`
+	SkipBucketVersioning           bool              `mapstructure:"skip_bucket_versioning"`
+	SkipBucketSSEncryption         bool              `mapstructure:"skip_bucket_ssencryption"`
+	SkipBucketAccessLogging        bool              `mapstructure:"skip_bucket_accesslogging"`
+	SkipBucketRootAccess           bool              `mapstructure:"skip_bucket_root_access"`
+	SkipBucketEnforcedTLS          bool              `mapstructure:"skip_bucket_enforced_tls"`
+	SkipBucketPublicAccessBlocking bool              `mapstructure:"skip_bucket_public_access_blocking"`
+	DisableBucketUpdate            bool              `mapstructure:"disable_bucket_update"`
+	EnableLockTableSSEncryption    bool              `mapstructure:"enable_lock_table_ssencryption"`
+	DisableAWSClientChecksums      bool              `mapstructure:"disable_aws_client_checksums"`
+	AccessLoggingBucketName        string            `mapstructure:"accesslogging_bucket_name"`
+	AccessLoggingTargetPrefix      string            `mapstructure:"accesslogging_target_prefix"`
+	BucketSSEAlgorithm             string            `mapstructure:"bucket_sse_algorithm"`
+	BucketSSEKMSKeyID              string            `mapstructure:"bucket_sse_kms_key_id"`
 }
 
 // These are settings that can appear in the remote_state config that are ONLY used by Terragrunt and NOT forwarded
@@ -60,6 +61,7 @@ var terragruntOnlyConfigs = []string{
 	"skip_bucket_accesslogging",
 	"skip_bucket_root_access",
 	"skip_bucket_enforced_tls",
+	"skip_bucket_public_access_blocking",
 	"disable_bucket_update",
 	"enable_lock_table_ssencryption",
 	"disable_aws_client_checksums",
@@ -477,7 +479,9 @@ func updateS3BucketIfNecessary(s3Client *s3.S3, config *ExtendedRemoteStateConfi
 	}
 
 	if bucketUpdatesRequired.PublicAccess {
-		if err := EnablePublicAccessBlockingForS3Bucket(s3Client, config.remoteStateConfigS3.Bucket, terragruntOptions); err != nil {
+		if config.SkipBucketPublicAccessBlocking {
+			terragruntOptions.Logger.Debugf("Public access blocking is disabled for the remote state AWS S3 bucket %s using 'skip_bucket_public_access_blocking' config.", config.remoteStateConfigS3.Bucket)
+		} else if err := EnablePublicAccessBlockingForS3Bucket(s3Client, config.remoteStateConfigS3.Bucket, terragruntOptions); err != nil {
 			return err
 		}
 	}
@@ -558,13 +562,15 @@ func checkIfS3BucketNeedsUpdate(s3Client *s3.S3, config *ExtendedRemoteStateConf
 		}
 	}
 
-	enabled, err := checkIfS3PublicAccessBlockingEnabled(s3Client, &config.remoteStateConfigS3, terragruntOptions)
-	if err != nil {
-		return false, configBucket, err
-	}
-	if !enabled {
-		configBucket.PublicAccess = true
-		needUpdate = append(needUpdate, "Bucket Public Access Blocking")
+	if !config.SkipBucketPublicAccessBlocking {
+		enabled, err := checkIfS3PublicAccessBlockingEnabled(s3Client, &config.remoteStateConfigS3, terragruntOptions)
+		if err != nil {
+			return false, configBucket, err
+		}
+		if !enabled {
+			configBucket.PublicAccess = true
+			needUpdate = append(needUpdate, "Bucket Public Access Blocking")
+		}
 	}
 
 	// show update message if any of the above configs are not set
@@ -626,7 +632,9 @@ func CreateS3BucketWithVersioningSSEncryptionAndAccessLogging(s3Client *s3.S3, c
 		return err
 	}
 
-	if err := EnablePublicAccessBlockingForS3Bucket(s3Client, config.remoteStateConfigS3.Bucket, terragruntOptions); err != nil {
+	if config.SkipBucketPublicAccessBlocking {
+		terragruntOptions.Logger.Debugf("Public access blocking is disabled for the remote state AWS S3 bucket %s using 'skip_bucket_public_access_blocking' config.", config.remoteStateConfigS3.Bucket)
+	} else if err := EnablePublicAccessBlockingForS3Bucket(s3Client, config.remoteStateConfigS3.Bucket, terragruntOptions); err != nil {
 		return err
 	}
 
@@ -1017,6 +1025,11 @@ func EnableSSEForS3BucketWide(s3Client *s3.S3, config *ExtendedRemoteStateConfig
 		return errors.WithStackTrace(err)
 	}
 
+	partition, err := aws_helper.GetAWSPartition(config.GetAwsSessionConfig(), terragruntOptions)
+	if err != nil {
+		return errors.WithStackTrace(err)
+	}
+
 	// Encrypt with KMS by default
 	algorithm := s3.ServerSideEncryptionAwsKms
 	if config.BucketSSEAlgorithm != "" {
@@ -1029,7 +1042,7 @@ func EnableSSEForS3BucketWide(s3Client *s3.S3, config *ExtendedRemoteStateConfig
 	if algorithm == s3.ServerSideEncryptionAwsKms && config.BucketSSEKMSKeyID != "" {
 		defEnc.KMSMasterKeyID = aws.String(config.BucketSSEKMSKeyID)
 	} else if algorithm == s3.ServerSideEncryptionAwsKms {
-		kmsKeyID := fmt.Sprintf("arn:aws:kms:%s:%s:alias/aws/s3", config.remoteStateConfigS3.Region, accountID)
+		kmsKeyID := fmt.Sprintf("arn:%s:kms:%s:%s:alias/aws/s3", partition, config.remoteStateConfigS3.Region, accountID)
 		defEnc.KMSMasterKeyID = aws.String(kmsKeyID)
 	}
 

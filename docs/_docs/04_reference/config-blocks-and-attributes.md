@@ -293,7 +293,7 @@ instead of the module repository.**
 
 The `remote_state` block is used to configure how Terragrunt will set up the remote state configuration of your
 Terraform code. You can read more about Terragrunt's remote state functionality in [Keep your remote state configuration
-DRY](/use-cases/keep-your-remote-state-configuration-dry) use case overview.
+DRY](/docs/features/keep-your-remote-state-configuration-dry/) use case overview.
 
 The `remote_state` block supports the following arguments:
 
@@ -387,6 +387,7 @@ For the `s3` backend, the following additional properties are supported in the `
 - `skip_bucket_accesslogging`: _DEPRECATED_ If provided, will be ignored. A log warning will be issued in the console output to notify the user.
 - `skip_bucket_root_access`: When `true`, the S3 bucket that is created will not be configured with bucket policies that allow access to the root AWS user.
 - `skip_bucket_enforced_tls`: When `true`, the S3 bucket that is created will not be configured with a bucket policy that enforces access to the bucket via a TLS connection.
+- `skip_bucket_public_access_blocking`: When `true`, the S3 bucket that is created will not have public access blocking enabled.
 - `disable_bucket_update`: When `true`, disable update S3 bucket if not equal configured in config block
 - `enable_lock_table_ssencryption`: When `true`, the synchronization lock table in DynamoDB used for remote state concurrent access will not be configured with server side encryption.
 - `s3_bucket_tags`: A map of key value pairs to associate as tags on the created S3 bucket.
