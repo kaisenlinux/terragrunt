@@ -2,7 +2,7 @@ Source: terragrunt
 Section: admin
 Priority: optional
 Maintainer: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
-Build-Depends: debhelper-compat (= 13), golang-go (>= 1.16), dh-golang,
+Build-Depends: debhelper-compat (= 13), golang-go (>= 1.17), dh-golang,
 Standards-Version: 4.6.1
 Homepage: https://terragrunt.gruntwork.io/
 Vcs-Browser: https://gitlab.com/kaisenlinux/terragrunt
@@ -11,6 +11,6 @@ XS-Go-Import-Path: github.com/gruntwork-io/terragrunt
 
 Package: terragrunt
 Architecture: amd64 arm64 i386
-Depends: ${shlibs:Depends}, ${misc:Depends}, golang-go (>= 1.16),
+Depends: ${shlibs:Depends}, ${misc:Depends}, golang-go (>= 1.17),
 Description: Wrapper for Terraform
  Terragrunt is a thin wrapper for Terraform that provides extra tools for working with multiple Terraform modules.
