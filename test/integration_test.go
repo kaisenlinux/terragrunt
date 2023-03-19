@@ -133,6 +133,12 @@ const (
 	TEST_FIXTURE_RENDER_JSON_MOCK_OUTPUTS                   = "fixture-render-json-mock-outputs"
 	TEST_FIXTURE_STARTSWITH                                 = "fixture-startswith"
 	TEST_FIXTURE_ENDSWITH                                   = "fixture-endswith"
+	TEST_FIXTURE_TFLINT_NO_ISSUES_FOUND                     = "fixture-tflint/no-issues-found"
+	TEST_FIXTURE_TFLINT_ISSUES_FOUND                        = "fixture-tflint/issues-found"
+	TEST_FIXTURE_TFLINT_NO_CONFIG_FILE                      = "fixture-tflint/no-config-file"
+	TEST_FIXTURE_TFLINT_MODULE_FOUND                        = "fixture-tflint/module-found"
+	TEST_FIXTURE_TFLINT_NO_TF_SOURCE_PATH                   = "fixture-tflint/no-tf-source"
+	TEST_FIXTURE_PARALLEL_RUN                               = "fixture-parallel-run"
 	TERRAFORM_BINARY                                        = "terraform"
 	TERRAFORM_FOLDER                                        = ".terraform"
 	TERRAFORM_STATE                                         = "terraform.tfstate"
@@ -3350,6 +3356,7 @@ func TestReadTerragruntConfigFull(t *testing.T) {
 }
 
 func logBufferContentsLineByLine(t *testing.T, out bytes.Buffer, label string) {
+	t.Helper()
 	t.Logf("[%s] Full contents of %s:", t.Name(), label)
 	lines := strings.Split(out.String(), "\n")
 	for _, line := range lines {
@@ -3864,6 +3871,19 @@ func copyEnvironment(t *testing.T, environmentPath string) string {
 	t.Logf("Copying %s to %s", environmentPath, tmpDir)
 
 	require.NoError(t, util.CopyFolderContents(environmentPath, util.JoinPath(tmpDir, environmentPath), ".terragrunt-test", nil))
+
+	return tmpDir
+}
+
+func copyEnvironmentWithTflint(t *testing.T, environmentPath string) string {
+	tmpDir, err := ioutil.TempDir("", "terragrunt-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir due to error: %v", err)
+	}
+
+	t.Logf("Copying %s to %s", environmentPath, tmpDir)
+
+	require.NoError(t, util.CopyFolderContents(environmentPath, util.JoinPath(tmpDir, environmentPath), ".terragrunt-test", []string{".tflint.hcl"}))
 
 	return tmpDir
 }
@@ -5176,6 +5196,35 @@ func TestEndsWith(t *testing.T) {
 	validateBoolOutput(t, outputs, "endswith7", true)
 	validateBoolOutput(t, outputs, "endswith8", false)
 	validateBoolOutput(t, outputs, "endswith9", false)
+}
+
+func TestMockOutputsMergeWithState(t *testing.T) {
+	t.Parallel()
+
+	cleanupTerraformFolder(t, TEST_FIXTURE_REGRESSIONS)
+	tmpEnvPath := copyEnvironment(t, TEST_FIXTURE_REGRESSIONS)
+	rootPath := util.JoinPath(tmpEnvPath, TEST_FIXTURE_REGRESSIONS, "mocks-merge-with-state")
+
+	modulePath := util.JoinPath(rootPath, "module")
+	stdout := bytes.Buffer{}
+	stderr := bytes.Buffer{}
+	err := runTerragruntCommand(t, fmt.Sprintf("terragrunt apply --terragrunt-log-level debug --terragrunt-non-interactive -auto-approve --terragrunt-working-dir %s", modulePath), &stdout, &stderr)
+	logBufferContentsLineByLine(t, stdout, "module-executed")
+	require.NoError(t, err)
+
+	deepMapPath := util.JoinPath(rootPath, "deep-map")
+	stdout = bytes.Buffer{}
+	stderr = bytes.Buffer{}
+	err = runTerragruntCommand(t, fmt.Sprintf("terragrunt apply --terragrunt-log-level debug --terragrunt-non-interactive -auto-approve --terragrunt-working-dir %s", deepMapPath), &stdout, &stderr)
+	logBufferContentsLineByLine(t, stdout, "deep-map-executed")
+	require.NoError(t, err)
+
+	shallowPath := util.JoinPath(rootPath, "shallow")
+	stdout = bytes.Buffer{}
+	stderr = bytes.Buffer{}
+	err = runTerragruntCommand(t, fmt.Sprintf("terragrunt apply --terragrunt-log-level debug --terragrunt-non-interactive -auto-approve --terragrunt-working-dir %s", shallowPath), &stdout, &stderr)
+	logBufferContentsLineByLine(t, stdout, "shallow-map-executed")
+	require.NoError(t, err)
 }
 
 func validateBoolOutput(t *testing.T, outputs map[string]TerraformOutput, key string, value bool) {
