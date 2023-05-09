@@ -12,6 +12,7 @@ import (
 
 	"github.com/gruntwork-io/terragrunt/tflint"
 
+	"github.com/gruntwork-io/gruntwork-cli/collections"
 	"github.com/hashicorp/go-multierror"
 	"github.com/mattn/go-zglob"
 	"github.com/sirupsen/logrus"
@@ -62,6 +63,7 @@ const (
 	optTerragruntModulesThatInclude             = "terragrunt-modules-that-include"
 	optTerragruntFetchDependencyOutputFromState = "terragrunt-fetch-dependency-output-from-state"
 	optTerragruntUsePartialParseConfigCache     = "terragrunt-use-partial-parse-config-cache"
+	optTerragruntIncludeModulePrefix            = "terragrunt-include-module-prefix"
 	optTerragruntOutputWithMetadata             = "with-metadata"
 )
 
@@ -81,6 +83,7 @@ var allTerragruntBooleanOpts = []string{
 	optTerragruntFetchDependencyOutputFromState,
 	optTerragruntUsePartialParseConfigCache,
 	optTerragruntOutputWithMetadata,
+	optTerragruntIncludeModulePrefix,
 }
 var allTerragruntStringOpts = []string{
 	optTerragruntConfig,
@@ -103,17 +106,21 @@ var allTerragruntStringOpts = []string{
 	optTerragruntModulesThatInclude,
 }
 
-const CMD_INIT = "init"
-const CMD_INIT_FROM_MODULE = "init-from-module"
-const CMD_PROVIDERS = "providers"
-const CMD_LOCK = "lock"
-const CMD_TERRAGRUNT_INFO = "terragrunt-info"
-const CMD_TERRAGRUNT_VALIDATE_INPUTS = "validate-inputs"
-const CMD_TERRAGRUNT_GRAPH_DEPENDENCIES = "graph-dependencies"
-const CMD_TERRAGRUNT_READ_CONFIG = "terragrunt-read-config"
-const CMD_HCLFMT = "hclfmt"
-const CMD_AWS_PROVIDER_PATCH = "aws-provider-patch"
-const CMD_RENDER_JSON = "render-json"
+const (
+	CMD_INIT                          = "init"
+	CMD_INIT_FROM_MODULE              = "init-from-module"
+	CMD_PLAN                          = "plan"
+	CMD_APPLY                         = "apply"
+	CMD_PROVIDERS                     = "providers"
+	CMD_LOCK                          = "lock"
+	CMD_TERRAGRUNT_INFO               = "terragrunt-info"
+	CMD_TERRAGRUNT_VALIDATE_INPUTS    = "validate-inputs"
+	CMD_TERRAGRUNT_GRAPH_DEPENDENCIES = "graph-dependencies"
+	CMD_TERRAGRUNT_READ_CONFIG        = "terragrunt-read-config"
+	CMD_HCLFMT                        = "hclfmt"
+	CMD_AWS_PROVIDER_PATCH            = "aws-provider-patch"
+	CMD_RENDER_JSON                   = "render-json"
+)
 
 // START: Constants useful for multimodule command handling
 const CMD_RUN_ALL = "run-all"
@@ -263,6 +270,7 @@ GLOBAL OPTIONS:
    terragrunt-strict-validate                   Sets strict mode for the validate-inputs command. By default, strict mode is off. When this flag is passed, strict mode is turned on. When strict mode is turned off, the validate-inputs command will only return an error if required inputs are missing from all input sources (env vars, var files, etc). When strict mode is turned on, an error will be returned if required inputs are missing OR if unused variables are passed to Terragrunt.
    terragrunt-json-out                          The file path that terragrunt should use when rendering the terragrunt.hcl config as json. Only used in the render-json command. Defaults to terragrunt_rendered.json.
    terragrunt-use-partial-parse-config-cache    Enables caching of includes during partial parsing operations. Will also be used for the --terragrunt-iam-role option if provided.
+   terragrunt-include-module-prefix             When this flag is set output from Terraform sub-commands is prefixed with module path.
 
 VERSION:
    {{.Version}}{{if len .Authors}}
@@ -1097,7 +1105,7 @@ func providersNeedInit(terragruntOptions *options.TerragruntOptions) bool {
 //
 // If terraformSource is specified, then arguments to download the terraform source will be appended to the init command.
 //
-// This method will return an error and NOT run terraform init if the user has disabled Auto-Init
+// This method will return an error and NOT run terraform init if the user has disabled Auto-Init.
 //
 // This method takes in the "original" terragrunt options which has the unmodified 'WorkingDir' from before downloading the code from the source URL,
 // and the "updated" terragrunt options that will contain the updated 'WorkingDir' into which the code has been downloaded
@@ -1134,8 +1142,12 @@ func prepareInitOptions(terragruntOptions *options.TerragruntOptions, terraformS
 	initOptions.WorkingDir = terragruntOptions.WorkingDir
 	initOptions.TerraformCommand = CMD_INIT
 
-	// Don't pollute stdout with the stdout from Auto Init
-	initOptions.Writer = initOptions.ErrWriter
+	initOutputForCommands := []string{CMD_PLAN, CMD_APPLY}
+	terraformCommand := util.FirstArg(terragruntOptions.TerraformCliArgs)
+	if !collections.ListContainsElement(initOutputForCommands, terraformCommand) {
+		// Since some command can return a json string, it is necessary to suppress output to stdout of the `terraform init` command.
+		initOptions.Writer = io.Discard
+	}
 
 	return initOptions, nil
 }
