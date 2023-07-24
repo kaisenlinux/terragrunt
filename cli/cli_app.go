@@ -53,6 +53,7 @@ const (
 	optTerragruntStrictInclude                  = "terragrunt-strict-include"
 	optTerragruntParallelism                    = "terragrunt-parallelism"
 	optTerragruntCheck                          = "terragrunt-check"
+	optTerragruntDiff                           = "terragrunt-diff"
 	optTerragruntHCLFmt                         = "terragrunt-hclfmt-file"
 	optTerragruntDebug                          = "terragrunt-debug"
 	optTerragruntOverrideAttr                   = "terragrunt-override-attr"
@@ -63,6 +64,8 @@ const (
 	optTerragruntFetchDependencyOutputFromState = "terragrunt-fetch-dependency-output-from-state"
 	optTerragruntUsePartialParseConfigCache     = "terragrunt-use-partial-parse-config-cache"
 	optTerragruntIncludeModulePrefix            = "terragrunt-include-module-prefix"
+	optTerragruntFailOnStateBucketCreation      = "terragrunt-fail-on-state-bucket-creation"
+	optTerragruntDisableBucketUpdate            = "terragrunt-disable-bucket-update"
 	optTerragruntOutputWithMetadata             = "with-metadata"
 )
 
@@ -77,12 +80,15 @@ var allTerragruntBooleanOpts = []string{
 	optTerragruntNoAutoRetry,
 	optTerragruntNoAutoApprove,
 	optTerragruntCheck,
+	optTerragruntDiff,
 	optTerragruntStrictInclude,
 	optTerragruntDebug,
 	optTerragruntFetchDependencyOutputFromState,
 	optTerragruntUsePartialParseConfigCache,
 	optTerragruntOutputWithMetadata,
 	optTerragruntIncludeModulePrefix,
+	optTerragruntFailOnStateBucketCreation,
+	optTerragruntDisableBucketUpdate,
 }
 var allTerragruntStringOpts = []string{
 	optTerragruntConfig,
@@ -270,6 +276,8 @@ GLOBAL OPTIONS:
    terragrunt-json-out                          The file path that terragrunt should use when rendering the terragrunt.hcl config as json. Only used in the render-json command. Defaults to terragrunt_rendered.json.
    terragrunt-use-partial-parse-config-cache    Enables caching of includes during partial parsing operations. Will also be used for the --terragrunt-iam-role option if provided.
    terragrunt-include-module-prefix             When this flag is set output from Terraform sub-commands is prefixed with module path.
+   terragrunt-fail-on-state-bucket-creation     When this flag is set Terragrunt will fail if the remote state bucket needs to be created.
+   terragrunt-disable-bucket-update             When this flag is set Terragrunt will not update the remote state bucket.
 
 VERSION:
    {{.Version}}{{if len .Authors}}
@@ -606,7 +614,7 @@ func checkVersionConstraints(terragruntOptions *options.TerragruntOptions) error
 
 // Run graph dependencies prints the dependency graph to stdout
 func runGraphDependencies(terragruntOptions *options.TerragruntOptions) error {
-	stack, err := configstack.FindStackInSubfolders(terragruntOptions)
+	stack, err := configstack.FindStackInSubfolders(terragruntOptions, nil)
 	if err != nil {
 		return err
 	}
@@ -703,12 +711,18 @@ func processErrorHooks(hooks []config.ErrorHook, terragruntOptions *options.Terr
 				workingDir = *curHook.WorkingDir
 			}
 
+			var suppressStdout bool
+			if curHook.SuppressStdout != nil && *curHook.SuppressStdout {
+				suppressStdout = true
+			}
+
 			actionToExecute := curHook.Execute[0]
 			actionParams := curHook.Execute[1:]
+
 			_, possibleError := shell.RunShellCommandWithOutput(
 				terragruntOptions,
 				workingDir,
-				false,
+				suppressStdout,
 				false,
 				actionToExecute, actionParams...,
 			)
@@ -763,6 +777,11 @@ func runHook(terragruntOptions *options.TerragruntOptions, terragruntConfig *con
 		workingDir = *curHook.WorkingDir
 	}
 
+	var suppressStdout bool
+	if curHook.SuppressStdout != nil && *curHook.SuppressStdout {
+		suppressStdout = true
+	}
+
 	actionToExecute := curHook.Execute[0]
 	actionParams := curHook.Execute[1:]
 
@@ -774,7 +793,7 @@ func runHook(terragruntOptions *options.TerragruntOptions, terragruntConfig *con
 		_, possibleError := shell.RunShellCommandWithOutput(
 			terragruntOptions,
 			workingDir,
-			false,
+			suppressStdout,
 			false,
 			actionToExecute, actionParams...,
 		)
@@ -1186,7 +1205,7 @@ func runAll(terragruntOptions *options.TerragruntOptions) error {
 		}
 	}
 
-	stack, err := configstack.FindStackInSubfolders(terragruntOptions)
+	stack, err := configstack.FindStackInSubfolders(terragruntOptions, nil)
 	if err != nil {
 		return err
 	}

@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 
+	urlhelper "github.com/hashicorp/go-getter/helper/url"
+
 	"fmt"
 
 	"github.com/gruntwork-io/terragrunt/errors"
@@ -18,6 +20,8 @@ import (
 )
 
 const TerraformLockFile = ".terraform.lock.hcl"
+
+const TerragruntCacheDir = ".terragrunt-cache"
 
 // FileOrData will read the contents of the data of the given arg if it is a file, and otherwise return the contents by
 // itself. This will return an error if the given path is a directory.
@@ -189,7 +193,7 @@ func expandGlobPath(source, absoluteGlobPath string) ([]string, error) {
 		return nil, errors.WithStackTrace(err)
 	}
 	for _, absoluteExpandGlobPath := range absoluteExpandGlob {
-		if strings.Contains(absoluteExpandGlobPath, ".terragrunt-cache") {
+		if strings.Contains(absoluteExpandGlobPath, TerragruntCacheDir) {
 			continue
 		}
 		relativeExpandGlobPath, err := GetPathRelativeTo(absoluteExpandGlobPath, source)
@@ -390,6 +394,20 @@ func HasPathPrefix(path, prefix string) bool {
 func JoinTerraformModulePath(modulesFolder string, path string) string {
 	cleanModulesFolder := strings.TrimRight(modulesFolder, `/\`)
 	cleanPath := strings.TrimLeft(path, `/\`)
+	// if source path contains "?ref=", reconstruct module dir using "//"
+	if strings.Contains(cleanModulesFolder, "?ref=") && cleanPath != "" {
+		canonicalSourceUrl, err := urlhelper.Parse(cleanModulesFolder)
+		if err == nil {
+			// append path
+			if canonicalSourceUrl.Opaque != "" {
+				canonicalSourceUrl.Opaque = fmt.Sprintf("%s//%s", strings.TrimRight(canonicalSourceUrl.Opaque, `/\`), cleanPath)
+			} else {
+				canonicalSourceUrl.Path = fmt.Sprintf("%s//%s", strings.TrimRight(canonicalSourceUrl.Path, `/\`), cleanPath)
+			}
+			return canonicalSourceUrl.String()
+		}
+		// fallback to old behavior if we can't parse the url
+	}
 	return fmt.Sprintf("%s//%s", cleanModulesFolder, cleanPath)
 }
 
