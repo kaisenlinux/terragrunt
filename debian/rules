@@ -15,6 +15,7 @@ override_dh_auto_test:
 	go test
 
 override_dh_auto_install:
-	dh_auto_install -- --no-source
+	install -p -m 0644 $(CURDIR)/debian/terragrunt.png $(CURDIR)/debian/terragrunt/usr/share/pixmaps
+	install -p -m 0755 $(CURDIR)/terragrunt $(CURDIR)/debian/terragrunt/usr/bin
 
 override_dh_dwz:

@@ -1,6 +1,7 @@
 package configstack
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -39,6 +40,10 @@ func (module *TerraformModule) String() string {
 		"Module %s (excluded: %v, assume applied: %v, dependencies: [%s])",
 		module.Path, module.FlagExcluded, module.AssumeAlreadyApplied, strings.Join(dependencies, ", "),
 	)
+}
+
+func (module TerraformModule) MarshalJSON() ([]byte, error) {
+	return json.Marshal(module.Path)
 }
 
 // Go through each of the given Terragrunt configuration files and resolve the module that configuration file represents
@@ -494,7 +499,7 @@ func confirmShouldApplyExternalDependency(module *TerraformModule, dependency *T
 		return false, nil
 	}
 
-	prompt := fmt.Sprintf("Module %s depends on module %s, which is an external dependency outside of the current working directory. Should Terragrunt run this external dependency? Warning, if you say 'yes', Terragrunt will make changes in %s as well!", module.Path, dependency.Path, dependency.Path)
+	prompt := fmt.Sprintf("Module: \t\t %s\nExternal dependency: \t %s\nShould Terragrunt apply the external dependency?", module.Path, dependency.Path)
 	return shell.PromptUserForYesNo(prompt, terragruntOptions)
 }
 
