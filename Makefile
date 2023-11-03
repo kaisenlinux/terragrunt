@@ -33,9 +33,15 @@ terragrunt: $(shell find . \( -type d -name 'vendor' -prune \) \
                         -o \( -type f -name '*.go'   -print \) )
 	set -xe ;\
 	vtag_maybe_extra=$$(git describe --tags --abbrev=12 --dirty --broken) ;\
-	go build -o $@ -ldflags "-X main.VERSION=$${vtag_maybe_extra}" .
+	go build -o $@ -ldflags "-X github.com/gruntwork-io/go-commons/version.Version=$${vtag_maybe_extra} -extldflags '-static'" .
 
 clean:
 	rm -f terragrunt
 
-.PHONY: help fmtcheck fmt install-fmt-hook clean
+install-lint:
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.54.2
+
+run-lint:
+	golangci-lint run -v ./...
+
+.PHONY: help fmtcheck fmt install-fmt-hook clean install-lint run-lint

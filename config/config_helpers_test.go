@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gruntwork-io/terragrunt/errors"
+	"github.com/gruntwork-io/go-commons/errors"
 	"github.com/gruntwork-io/terragrunt/options"
 	"github.com/gruntwork-io/terragrunt/test/helpers"
 	"github.com/stretchr/testify/assert"
@@ -428,7 +428,7 @@ func TestResolveEnvInterpolationConfigString(t *testing.T) {
 		{
 			`iam_role = get_env("TEST_ENV_TERRAGRUNT_VAR")`,
 			nil,
-			terragruntOptionsForTestWithEnv(t, "/root/child/"+DefaultTerragruntConfigPath, map[string]string{"TEST_ENV_TERRAGRUNT_VAR": "SOMETHING"}),
+			terragruntOptionsForTestWithEnv(t, fmt.Sprintf("/root/child/%s", DefaultTerragruntConfigPath), map[string]string{"TEST_ENV_TERRAGRUNT_VAR": "SOMETHING"}),
 			"SOMETHING",
 			"",
 		},
@@ -1128,6 +1128,28 @@ func TestStrContains(t *testing.T) {
 	}
 }
 
+func TestReadTFVarsFiles(t *testing.T) {
+	t.Parallel()
+
+	options := terragruntOptionsForTest(t, DefaultTerragruntConfigPath)
+	tgConfigCty, err := readTerragruntConfig("../test/fixture-read-tf-vars/terragrunt.hcl", nil, options)
+	require.NoError(t, err)
+
+	tgConfigMap, err := parseCtyValueToMap(tgConfigCty)
+	require.NoError(t, err)
+
+	locals := tgConfigMap["locals"].(map[string]interface{})
+
+	assert.Equal(t, locals["string_var"].(string), "string")
+	assert.Equal(t, locals["number_var"].(float64), float64(42))
+	assert.Equal(t, locals["bool_var"].(bool), true)
+	assert.Equal(t, locals["list_var"].([]interface{}), []interface{}{"hello", "world"})
+
+	assert.Equal(t, locals["json_number_var"].(float64), float64(24))
+	assert.Equal(t, locals["json_string_var"].(string), "another string")
+	assert.Equal(t, locals["json_bool_var"].(bool), false)
+}
+
 func mockConfigWithSource(sourceUrl string) *TerragruntConfig {
 	cfg := TerragruntConfig{IsPartial: true}
 	cfg.Terraform = &TerraformConfig{Source: &sourceUrl}
@@ -1137,7 +1159,7 @@ func mockConfigWithSource(sourceUrl string) *TerragruntConfig {
 // Return keys as a map so it is treated like a set, and order doesn't matter when comparing equivalence
 func getKeys(valueMap map[string]cty.Value) map[string]bool {
 	keys := map[string]bool{}
-	for k, _ := range valueMap {
+	for k := range valueMap {
 		keys[k] = true
 	}
 	return keys

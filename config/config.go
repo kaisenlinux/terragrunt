@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/url"
 	"os"
 	"path"
@@ -20,17 +19,20 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/gruntwork-io/go-commons/errors"
+	"github.com/gruntwork-io/go-commons/files"
 	"github.com/gruntwork-io/terragrunt/codegen"
-	"github.com/gruntwork-io/terragrunt/errors"
 	"github.com/gruntwork-io/terragrunt/options"
 	"github.com/gruntwork-io/terragrunt/remote"
 	"github.com/gruntwork-io/terragrunt/util"
 )
 
-const DefaultTerragruntConfigPath = "terragrunt.hcl"
-const DefaultTerragruntJsonConfigPath = "terragrunt.hcl.json"
+const (
+	DefaultTerragruntConfigPath     = "terragrunt.hcl"
+	DefaultTerragruntJsonConfigPath = "terragrunt.hcl.json"
+)
 
-const foundInFile = "found_in_file"
+const FoundInFile = "found_in_file"
 
 const (
 	MetadataTerraform                   = "terraform"
@@ -52,7 +54,14 @@ const (
 	MetadataRetryableErrors             = "retryable_errors"
 	MetadataRetryMaxAttempts            = "retry_max_attempts"
 	MetadataRetrySleepIntervalSec       = "retry_sleep_interval_sec"
+	MetadataDependentModules            = "dependent_modules"
 )
+
+// Order matters, for example if none of the files are found `GetDefaultConfigPath` func returns the last element.
+var DefaultTerragruntConfigPaths = []string{
+	DefaultTerragruntJsonConfigPath,
+	DefaultTerragruntConfigPath,
+}
 
 // TerragruntConfig represents a parsed and expanded configuration
 // NOTE: if any attributes are added, make sure to update terragruntConfigAsCty in config_as_cty.go
@@ -86,6 +95,9 @@ type TerragruntConfig struct {
 
 	// Map to store fields metadata
 	FieldsMetadata map[string]map[string]interface{}
+
+	// List of dependent modules
+	DependentModulesPath []*string
 }
 
 func (conf *TerragruntConfig) String() string {
@@ -435,13 +447,11 @@ func (conf *TerraformExtraArguments) String() string {
 }
 
 func (conf *TerraformExtraArguments) GetVarFiles(logger *logrus.Entry) []string {
-	varFiles := []string{}
+	var varFiles []string
 
 	// Include all specified RequiredVarFiles.
 	if conf.RequiredVarFiles != nil {
-		for _, file := range util.RemoveDuplicatesFromListKeepLast(*conf.RequiredVarFiles) {
-			varFiles = append(varFiles, file)
-		}
+		varFiles = append(varFiles, util.RemoveDuplicatesFromListKeepLast(*conf.RequiredVarFiles)...)
 	}
 
 	// If OptionalVarFiles is specified, check for each file if it exists and if so, include in the var
@@ -464,11 +474,12 @@ func (conf *TerraformExtraArguments) GetVarFiles(logger *logrus.Entry) []string 
 // URL: via a command-line option or via an entry in the Terragrunt configuration. If the user used one of these, this
 // method returns the source URL or an empty string if there is no source url
 func GetTerraformSourceUrl(terragruntOptions *options.TerragruntOptions, terragruntConfig *TerragruntConfig) (string, error) {
-	if terragruntOptions.Source != "" {
+	switch {
+	case terragruntOptions.Source != "":
 		return terragruntOptions.Source, nil
-	} else if terragruntConfig.Terraform != nil && terragruntConfig.Terraform.Source != nil {
+	case terragruntConfig.Terraform != nil && terragruntConfig.Terraform.Source != nil:
 		return adjustSourceWithMap(terragruntOptions.SourceMap, *terragruntConfig.Terraform.Source, terragruntOptions.OriginalTerragruntConfigPath)
-	} else {
+	default:
 		return "", nil
 	}
 }
@@ -519,7 +530,7 @@ func adjustSourceWithMap(sourceMap map[string]string, source string, modulePath 
 	// Check if there is an entry to replace the URL portion in the map. Return the source as is if there is no entry in
 	// the map.
 	sourcePath, hasKey := sourceMap[moduleUrlQuery]
-	if hasKey == false {
+	if !hasKey {
 		return source, nil
 	}
 
@@ -537,23 +548,25 @@ func adjustSourceWithMap(sourceMap map[string]string, source string, modulePath 
 
 }
 
-// Return the default hcl path to use for the Terragrunt configuration file in the given directory
-func DefaultConfigPath(workingDir string) string {
-	return util.JoinPath(workingDir, DefaultTerragruntConfigPath)
-}
-
-// Return the default path to use for the Terragrunt Json configuration file in the given directory
-func DefaultJsonConfigPath(workingDir string) string {
-	return util.JoinPath(workingDir, DefaultTerragruntJsonConfigPath)
-}
-
 // Return the default path to use for the Terragrunt configuration that exists within the path giving preference to `terragrunt.hcl`
 func GetDefaultConfigPath(workingDir string) string {
-	if util.FileNotExists(DefaultConfigPath(workingDir)) && util.FileExists(DefaultJsonConfigPath(workingDir)) {
-		return DefaultJsonConfigPath(workingDir)
+	// check if a configuration file was passed as `workingDir`.
+	if !files.IsDir(workingDir) && files.FileExists(workingDir) {
+		return workingDir
 	}
 
-	return DefaultConfigPath(workingDir)
+	var configPath string
+
+	for _, configPath = range DefaultTerragruntConfigPaths {
+		if !filepath.IsAbs(configPath) {
+			configPath = util.JoinPath(workingDir, configPath)
+		}
+		if files.FileExists(configPath) {
+			break
+		}
+	}
+
+	return configPath
 }
 
 // Returns a list of all Terragrunt config files in the given path or any subfolder of the path. A file is a Terragrunt
@@ -566,18 +579,25 @@ func FindConfigFilesInPath(rootPath string, terragruntOptions *options.Terragrun
 			return err
 		}
 
-		// Skip the Terragrunt cache dir entirely
-		if info.IsDir() && info.Name() == util.TerragruntCacheDir {
+		if !info.IsDir() {
+			return nil
+		}
+
+		if ok, err := isTerragruntModuleDir(path, terragruntOptions); err != nil {
+			return err
+		} else if !ok {
 			return filepath.SkipDir
 		}
 
-		isTerragruntModule, err := containsTerragruntModule(path, info, terragruntOptions)
-		if err != nil {
-			return err
-		}
+		for _, configFile := range append(DefaultTerragruntConfigPaths, filepath.Base(terragruntOptions.TerragruntConfigPath)) {
+			if !filepath.IsAbs(configFile) {
+				configFile = util.JoinPath(path, configFile)
+			}
 
-		if isTerragruntModule {
-			configFiles = append(configFiles, GetDefaultConfigPath(path))
+			if !util.IsDir(configFile) && util.FileExists(configFile) {
+				configFiles = append(configFiles, configFile)
+				break
+			}
 		}
 
 		return nil
@@ -586,14 +606,9 @@ func FindConfigFilesInPath(rootPath string, terragruntOptions *options.Terragrun
 	return configFiles, err
 }
 
-// Returns true if the given path with the given FileInfo contains a Terragrunt module and false otherwise. A path
-// contains a Terragrunt module if it contains a Terragrunt configuration file (terragrunt.hcl, terragrunt.hcl.json)
-// and is not a cache, data, or download dir.
-func containsTerragruntModule(path string, info os.FileInfo, terragruntOptions *options.TerragruntOptions) (bool, error) {
-	if !info.IsDir() {
-		return false, nil
-	}
-
+// isTerragruntModuleDir returns true if the given path contains a Terragrunt module and false otherwise. The path
+// can not contain a cache, data, or download dir.
+func isTerragruntModuleDir(path string, terragruntOptions *options.TerragruntOptions) (bool, error) {
 	// Skip the Terragrunt cache dir
 	if util.ContainsPath(path, util.TerragruntCacheDir) {
 		return false, nil
@@ -623,10 +638,10 @@ func containsTerragruntModule(path string, info os.FileInfo, terragruntOptions *
 
 	// Skip any custom download dir specified by the user
 	if strings.Contains(canonicalPath, canonicalDownloadPath) {
-		return false, err
+		return false, nil
 	}
 
-	return util.FileExists(GetDefaultConfigPath(path)), nil
+	return true, nil
 }
 
 // Read the Terragrunt config file from its default location
@@ -883,7 +898,7 @@ func convertToTerragruntConfig(
 		GenerateConfigs: map[string]codegen.GenerateConfig{},
 	}
 
-	defaultMetadata := map[string]interface{}{foundInFile: configPath}
+	defaultMetadata := map[string]interface{}{FoundInFile: configPath}
 	if terragruntConfigFromFile.RemoteState != nil {
 		remoteState, err := terragruntConfigFromFile.RemoteState.toConfig()
 		if err != nil {
@@ -1109,8 +1124,8 @@ func validateGenerateBlocks(blocks *[]terragruntGenerateBlock) error {
 // configFileHasDependencyBlock statically checks the terrragrunt config file at the given path and checks if it has any
 // dependency or dependencies blocks defined. Note that this does not do any decoding of the blocks, as it is only meant
 // to check for block presence.
-func configFileHasDependencyBlock(configPath string, terragruntOptions *options.TerragruntOptions) (bool, error) {
-	configBytes, err := ioutil.ReadFile(configPath)
+func configFileHasDependencyBlock(configPath string) (bool, error) {
+	configBytes, err := os.ReadFile(configPath)
 	if err != nil {
 		return false, errors.WithStackTrace(err)
 	}
@@ -1157,7 +1172,7 @@ func (conf *TerragruntConfig) SetFieldMetadata(fieldName string, m map[string]in
 // SetFieldMetadataMap set metadata on fields from map keys.
 // Example usage - setting metadata on all variables from inputs.
 func (conf *TerragruntConfig) SetFieldMetadataMap(field string, data map[string]interface{}, metadata map[string]interface{}) {
-	for name, _ := range data {
+	for name := range data {
 		conf.SetFieldMetadataWithType(field, name, metadata)
 	}
 }

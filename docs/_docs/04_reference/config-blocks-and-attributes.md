@@ -884,6 +884,7 @@ The `dependency` block supports the following arguments:
   outputs of this dependency with the expression `dependency.vpc.outputs`.
 - `config_path` (attribute): Path to a Terragrunt module (folder with a `terragrunt.hcl` file) that should be included
   as a dependency in this configuration.
+- `enabled` (attribute): When `false`, excludes the dependency from execution. Defaults to `true`.
 - `skip_outputs` (attribute): When `true`, skip calling `terragrunt output` when processing this dependency. If
   `mock_outputs` is configured, set `outputs` to the value of `mock_outputs`. Otherwise, `outputs` will be set to an
   empty map. Put another way, setting `skip_outputs` means "use mocks all the time if `mock_outputs` are set."
@@ -1258,6 +1259,26 @@ terragrunt_version_constraint = ">= 0.23"
 
 The terragrunt `retryable_errors` list can be used to override the default list of retryable errors with your own custom list.
 To learn more about the `retryable_errors` attribute, see the [auto-retry feature overview](/docs/features/auto-retry).
+
+Default List:
+
+```hcl
+retryable_errors = [
+  "(?s).*Failed to load state.*tcp.*timeout.*",
+  "(?s).*Failed to load backend.*TLS handshake timeout.*",
+  "(?s).*Creating metric alarm failed.*request to update this alarm is in progress.*",
+  "(?s).*Error installing provider.*TLS handshake timeout.*",
+  "(?s).*Error configuring the backend.*TLS handshake timeout.*",
+  "(?s).*Error installing provider.*tcp.*timeout.*",
+  "(?s).*Error installing provider.*tcp.*connection reset by peer.*",
+  "NoSuchBucket: The specified bucket does not exist",
+  "(?s).*Error creating SSM parameter: TooManyUpdates:.*",
+  "(?s).*app.terraform.io.*: 429 Too Many Requests.*",
+  "(?s).*ssh_exchange_identification.*Connection closed by remote host.*",
+  "(?s).*Client\\.Timeout exceeded while awaiting headers.*",
+  "(?s).*Could not download module.*The requested URL returned error: 429.*",
+]
+```
 
 Example:
 

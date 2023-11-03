@@ -6,7 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,13 +21,13 @@ import (
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/gruntwork-io/go-commons/errors"
 	"github.com/gruntwork-io/terragrunt/aws_helper"
-	"github.com/gruntwork-io/terragrunt/cli/tfsource"
 	"github.com/gruntwork-io/terragrunt/codegen"
-	"github.com/gruntwork-io/terragrunt/errors"
 	"github.com/gruntwork-io/terragrunt/options"
 	"github.com/gruntwork-io/terragrunt/remote"
 	"github.com/gruntwork-io/terragrunt/shell"
+	"github.com/gruntwork-io/terragrunt/terraform"
 	"github.com/gruntwork-io/terragrunt/util"
 )
 
@@ -35,6 +35,7 @@ const renderJsonCommand = "render-json"
 
 type Dependency struct {
 	Name                                string     `hcl:",label" cty:"name"`
+	Enabled                             *bool      `hcl:"enabled,attr" cty:"enabled"`
 	ConfigPath                          string     `hcl:"config_path,attr" cty:"config_path"`
 	SkipOutputs                         *bool      `hcl:"skip_outputs,attr" cty:"skip"`
 	MockOutputs                         *cty.Value `hcl:"mock_outputs,attr" cty:"mock_outputs"`
@@ -59,6 +60,10 @@ type Dependency struct {
 func (targetDepConfig *Dependency) DeepMerge(sourceDepConfig Dependency) error {
 	if sourceDepConfig.ConfigPath != "" {
 		targetDepConfig.ConfigPath = sourceDepConfig.ConfigPath
+	}
+
+	if sourceDepConfig.Enabled != nil {
+		targetDepConfig.Enabled = sourceDepConfig.Enabled
 	}
 
 	if sourceDepConfig.SkipOutputs != nil {
@@ -107,7 +112,15 @@ func (dependencyConfig Dependency) getMockOutputsMergeStrategy() MergeStrategyTy
 
 // Given a dependency config, we should only attempt to get the outputs if SkipOutputs is nil or false
 func (dependencyConfig Dependency) shouldGetOutputs() bool {
-	return dependencyConfig.SkipOutputs == nil || !(*dependencyConfig.SkipOutputs)
+	return dependencyConfig.isEnabled() && (dependencyConfig.SkipOutputs == nil || !*dependencyConfig.SkipOutputs)
+}
+
+// isEnabled returns true if the dependency is enabled
+func (dependencyConfig Dependency) isEnabled() bool {
+	if dependencyConfig.Enabled == nil {
+		return true
+	}
+	return *dependencyConfig.Enabled
 }
 
 // Given a dependency config, we should only attempt to merge mocks outputs with the outputs if MockOutputsMergeWithState is not nil or true
@@ -124,7 +137,7 @@ func (dependencyConfig *Dependency) setRenderedOutputs(terragruntOptions *option
 		return nil
 	}
 
-	if (*dependencyConfig).shouldGetOutputs() || (*dependencyConfig).shouldReturnMockOutputs(terragruntOptions) {
+	if dependencyConfig.shouldGetOutputs() || dependencyConfig.shouldReturnMockOutputs(terragruntOptions) {
 		outputVal, err := getTerragruntOutputIfAppliedElseConfiguredDefault(*dependencyConfig, terragruntOptions)
 		if err != nil {
 			return err
@@ -160,6 +173,16 @@ func decodeAndRetrieveOutputs(
 		return nil, err
 	}
 
+	// Skip disabled dependencies
+	updatedDependencies := terragruntDependency{}
+	for _, dep := range decodedDependency.Dependencies {
+		if !dep.isEnabled() {
+			continue
+		}
+		updatedDependencies.Dependencies = append(updatedDependencies.Dependencies, dep)
+	}
+	decodedDependency = updatedDependencies
+
 	// Merge in included dependencies
 	if trackInclude != nil {
 		mergedDecodedDependency, err := handleIncludeForDependency(decodedDependency, trackInclude, terragruntOptions)
@@ -184,13 +207,13 @@ func dependencyBlocksToModuleDependencies(decodedDependencyBlocks []Dependency) 
 
 	paths := []string{}
 	for _, decodedDependencyBlock := range decodedDependencyBlocks {
-		configPath := decodedDependencyBlock.ConfigPath
-		if util.IsFile(configPath) && filepath.Base(configPath) == DefaultTerragruntConfigPath {
-			// dependencies system expects the directory containing the terragrunt.hcl file
-			configPath = filepath.Dir(configPath)
+		// skip dependency if is not enabled
+		if !decodedDependencyBlock.isEnabled() {
+			continue
 		}
-		paths = append(paths, configPath)
+		paths = append(paths, decodedDependencyBlock.ConfigPath)
 	}
+
 	return &ModuleDependencies{Paths: paths}
 }
 
@@ -278,6 +301,9 @@ func dependencyBlocksToCtyValue(dependencyConfigs []Dependency, terragruntOption
 	dependencyErrGroup, _ := errgroup.WithContext(context.Background())
 
 	for _, dependencyConfig := range dependencyConfigs {
+		if !dependencyConfig.isEnabled() {
+			continue
+		}
 		dependencyConfig := dependencyConfig // https://golang.org/doc/faq#closures_and_goroutines
 		dependencyErrGroup.Go(func() error {
 			// Loose struct to hold the attributes of the dependency. This includes:
@@ -329,6 +355,9 @@ func dependencyBlocksToCtyValue(dependencyConfigs []Dependency, terragruntOption
 //     If the dependency block indicates a mock_outputs_merge_strategy_with_state attribute, mock_outputs and state outputs will be merged following the merge strategy
 //   - If the dependency block does NOT indicate a mock_outputs attribute, this will return an error.
 func getTerragruntOutputIfAppliedElseConfiguredDefault(dependencyConfig Dependency, terragruntOptions *options.TerragruntOptions) (*cty.Value, error) {
+	if !dependencyConfig.isEnabled() {
+		return nil, nil
+	}
 	if dependencyConfig.shouldGetOutputs() {
 		outputVal, isEmpty, err := getTerragruntOutput(dependencyConfig, terragruntOptions)
 		if err != nil {
@@ -615,7 +644,7 @@ func terragruntAlreadyInit(terragruntOptions *options.TerragruntOptions, configP
 			workingDir = filepath.Dir(configPath)
 		}
 	} else {
-		terraformSource, err := tfsource.NewTerraformSource(sourceUrl, terragruntOptions.DownloadDir, terragruntOptions.WorkingDir, terragruntOptions.Logger)
+		terraformSource, err := terraform.NewSource(sourceUrl, terragruntOptions.DownloadDir, terragruntOptions.WorkingDir, terragruntOptions.Logger)
 		if err != nil {
 			return false, "", err
 		}
@@ -673,11 +702,16 @@ func getTerragruntOutputJsonFromRemoteState(
 	if err := util.EnsureDirectory(terragruntOptions.DownloadDir); err != nil {
 		return nil, err
 	}
-	tempWorkDir, err := ioutil.TempDir(terragruntOptions.DownloadDir, "")
+	tempWorkDir, err := os.MkdirTemp(terragruntOptions.DownloadDir, "")
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tempWorkDir)
+	defer func(path string) {
+		err := os.RemoveAll(path)
+		if err != nil {
+			terragruntOptions.Logger.Warnf("Failed to remove %s: %v", path, err)
+		}
+	}(tempWorkDir)
 	terragruntOptions.Logger.Debugf("Setting dependency working directory to %s", tempWorkDir)
 
 	targetTGOptions, err := setupTerragruntOptionsForBareTerraform(terragruntOptions, tempWorkDir, targetConfig, iamRoleOpts)
@@ -768,8 +802,13 @@ func getTerragruntOutputJsonFromRemoteStateS3(
 		return nil, err
 	}
 
-	defer result.Body.Close()
-	steateBody, err := ioutil.ReadAll(result.Body)
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			terragruntOptions.Logger.Warnf("Failed to close remote state response %v", err)
+		}
+	}(result.Body)
+	steateBody, err := io.ReadAll(result.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -791,11 +830,11 @@ func getTerragruntOutputJsonFromRemoteStateS3(
 func setupTerragruntOptionsForBareTerraform(originalOptions *options.TerragruntOptions, workingDir string, configPath string, iamRoleOpts options.IAMRoleOptions) (*options.TerragruntOptions, error) {
 	// Here we clone the terragrunt options again since we need to make further modifications to it to allow running
 	// terraform directly.
-	// Set the terraform working dir to the tempdir, and set stdout writer to ioutil.Discard so that output content is
+	// Set the terraform working dir to the tempdir, and set stdout writer to io.Discard so that output content is
 	// not logged.
 	targetTGOptions := cloneTerragruntOptionsForDependency(originalOptions, configPath)
 	targetTGOptions.WorkingDir = workingDir
-	targetTGOptions.Writer = ioutil.Discard
+	targetTGOptions.Writer = io.Discard
 
 	// If the target config has an IAM role directive and it was not set on the command line, set it to
 	// the one we retrieved from the config.

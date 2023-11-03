@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,7 +12,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 
-	"github.com/gruntwork-io/terragrunt/errors"
+	"github.com/gruntwork-io/go-commons/errors"
 	"github.com/gruntwork-io/terragrunt/options"
 	"github.com/gruntwork-io/terragrunt/util"
 )
@@ -91,7 +90,7 @@ func WriteToFile(terragruntOptions *options.TerragruntOptions, basePath string, 
 	}
 	contentsToWrite := fmt.Sprintf("%s%s", prefix, config.Contents)
 
-	if err := ioutil.WriteFile(targetPath, []byte(contentsToWrite), 0644); err != nil {
+	if err := os.WriteFile(targetPath, []byte(contentsToWrite), 0644); err != nil {
 		return errors.WithStackTrace(err)
 	}
 	terragruntOptions.Logger.Debugf("Generated file %s.", targetPath)

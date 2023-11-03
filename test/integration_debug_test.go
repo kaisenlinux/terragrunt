@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,10 +36,18 @@ func TestDebugGeneratedInputs(t *testing.T) {
 	tmpEnvPath := copyEnvironment(t, TEST_FIXTURE_INPUTS)
 	rootPath := util.JoinPath(tmpEnvPath, TEST_FIXTURE_INPUTS)
 
-	runTerragrunt(t, fmt.Sprintf("terragrunt plan --terragrunt-non-interactive --terragrunt-debug --terragrunt-working-dir %s", rootPath))
+	stdout := bytes.Buffer{}
+	stderr := bytes.Buffer{}
+
+	require.NoError(
+		t,
+		runTerragruntCommand(t, fmt.Sprintf("terragrunt plan --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-debug --terragrunt-working-dir %s", rootPath), &stdout, &stderr),
+	)
 
 	debugFile := util.JoinPath(rootPath, terragruntDebugFile)
 	assert.True(t, util.FileExists(debugFile))
+
+	require.Contains(t, stderr.String(), fmt.Sprintf("-chdir=\"%s\"", rootPath))
 
 	// If the debug file is generated correctly, we should be able to run terraform apply using the generated var file
 	// without going through terragrunt.
@@ -52,19 +59,19 @@ func TestDebugGeneratedInputs(t *testing.T) {
 		shell.RunTerraformCommand(mockOptions, "apply", "-auto-approve", "-var-file", debugFile),
 	)
 
-	stdout := bytes.Buffer{}
-	stderr := bytes.Buffer{}
+	stdout = bytes.Buffer{}
+	stderr = bytes.Buffer{}
 	require.NoError(
 		t,
 		runTerragruntCommand(t, fmt.Sprintf("terragrunt output -no-color -json --terragrunt-non-interactive --terragrunt-working-dir %s", rootPath), &stdout, &stderr),
 	)
 
 	outputs := map[string]TerraformOutput{}
-	require.NoError(t, json.Unmarshal([]byte(stdout.String()), &outputs))
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &outputs))
 	validateInputs(t, outputs)
 
 	// Also make sure the undefined variable is not included in the json file
-	debugJsonContents, err := ioutil.ReadFile(debugFile)
+	debugJsonContents, err := os.ReadFile(debugFile)
 	require.NoError(t, err)
 	var data map[string]interface{}
 	require.NoError(t, json.Unmarshal(debugJsonContents, &data))
@@ -173,7 +180,7 @@ func TestTerragruntValidateInputsWithStrictModeDisabledAndUnusedInputs(t *testin
 func TestRenderJSONConfig(t *testing.T) {
 	t.Parallel()
 
-	tmpDir, err := ioutil.TempDir("", "terragrunt-render-json-*")
+	tmpDir, err := os.MkdirTemp("", "terragrunt-render-json-*")
 	require.NoError(t, err)
 	jsonOut := filepath.Join(tmpDir, "terragrunt_rendered.json")
 	defer os.RemoveAll(tmpDir)
@@ -184,7 +191,7 @@ func TestRenderJSONConfig(t *testing.T) {
 	runTerragrunt(t, fmt.Sprintf("terragrunt run-all apply -auto-approve --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir %s", fixtureRenderJSON))
 	runTerragrunt(t, fmt.Sprintf("terragrunt render-json --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir %s --terragrunt-json-out %s", fixtureRenderJSONMainModulePath, jsonOut))
 
-	jsonBytes, err := ioutil.ReadFile(jsonOut)
+	jsonBytes, err := os.ReadFile(jsonOut)
 	require.NoError(t, err)
 
 	var rendered map[string]interface{}
@@ -230,6 +237,7 @@ func TestRenderJSONConfig(t *testing.T) {
 					"config_path":  "../dep",
 					"outputs":      nil,
 					"mock_outputs": nil,
+					"enabled":      nil,
 					"mock_outputs_allowed_terraform_commands": nil,
 					"mock_outputs_merge_strategy_with_state":  nil,
 					"mock_outputs_merge_with_state":           nil,
@@ -281,7 +289,7 @@ func TestRenderJSONConfig(t *testing.T) {
 func TestRenderJSONConfigWithIncludesDependenciesAndLocals(t *testing.T) {
 	t.Parallel()
 
-	tmpDir, err := ioutil.TempDir("", "terragrunt-render-json-*")
+	tmpDir, err := os.MkdirTemp("", "terragrunt-render-json-*")
 	require.NoError(t, err)
 	jsonOut := filepath.Join(tmpDir, "terragrunt_rendered.json")
 	defer os.RemoveAll(tmpDir)
@@ -293,7 +301,7 @@ func TestRenderJSONConfigWithIncludesDependenciesAndLocals(t *testing.T) {
 
 	runTerragrunt(t, fmt.Sprintf("terragrunt render-json --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir %s --terragrunt-json-out %s", workDir, jsonOut))
 
-	jsonBytes, err := ioutil.ReadFile(jsonOut)
+	jsonBytes, err := os.ReadFile(jsonOut)
 	require.NoError(t, err)
 
 	var rendered map[string]interface{}
@@ -330,6 +338,7 @@ func TestRenderJSONConfigWithIncludesDependenciesAndLocals(t *testing.T) {
 					"config_path":  "./baz",
 					"outputs":      nil,
 					"mock_outputs": nil,
+					"enabled":      nil,
 					"mock_outputs_allowed_terraform_commands": nil,
 					"mock_outputs_merge_strategy_with_state":  nil,
 					"mock_outputs_merge_with_state":           nil,
@@ -393,7 +402,7 @@ func TestRenderJSONConfigRunAll(t *testing.T) {
 
 	runTerragrunt(t, fmt.Sprintf("terragrunt run-all render-json --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir %s", workDir))
 
-	bazJSONBytes, err := ioutil.ReadFile(bazJSONOut)
+	bazJSONBytes, err := os.ReadFile(bazJSONOut)
 	require.NoError(t, err)
 
 	var bazRendered map[string]interface{}
@@ -411,7 +420,7 @@ func TestRenderJSONConfigRunAll(t *testing.T) {
 		)
 	}
 
-	rootChildJSONBytes, err := ioutil.ReadFile(rootChildJSONOut)
+	rootChildJSONBytes, err := os.ReadFile(rootChildJSONOut)
 	require.NoError(t, err)
 
 	var rootChildRendered map[string]interface{}

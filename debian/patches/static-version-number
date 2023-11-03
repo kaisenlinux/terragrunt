@@ -1,14 +1,14 @@
 Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 
---- terragrunt-0.48.6.orig/Makefile
-+++ terragrunt-0.48.6/Makefile
+--- terragrunt-0.53.1.orig/Makefile
++++ terragrunt-0.53.1/Makefile
 @@ -32,8 +32,7 @@ build: terragrunt
  terragrunt: $(shell find . \( -type d -name 'vendor' -prune \) \
                          -o \( -type f -name '*.go'   -print \) )
  	set -xe ;\
 -	vtag_maybe_extra=$$(git describe --tags --abbrev=12 --dirty --broken) ;\
--	go build -o $@ -ldflags "-X main.VERSION=$${vtag_maybe_extra}" .
-+	go build -o $@ -ldflags "-X main.VERSION=0.48.6" .
+-	go build -o $@ -ldflags "-X github.com/gruntwork-io/go-commons/version.Version=$${vtag_maybe_extra} -extldflags '-static'" .
++	go build -o $@ -ldflags "-X github.com/gruntwork-io/go-commons/version.Version=0.53.1 -extldflags '-static'" .
  
  clean:
  	rm -f terragrunt

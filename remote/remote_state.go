@@ -1,11 +1,12 @@
+// Package remote contains code for configuring remote state storage.
 package remote
 
 import (
 	"fmt"
 	"reflect"
 
+	"github.com/gruntwork-io/go-commons/errors"
 	"github.com/gruntwork-io/terragrunt/codegen"
-	"github.com/gruntwork-io/terragrunt/errors"
 	"github.com/gruntwork-io/terragrunt/options"
 )
 

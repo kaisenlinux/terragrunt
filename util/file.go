@@ -3,7 +3,6 @@ package util
 import (
 	"encoding/gob"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,7 +12,7 @@ import (
 
 	"fmt"
 
-	"github.com/gruntwork-io/terragrunt/errors"
+	"github.com/gruntwork-io/go-commons/errors"
 	"github.com/mattn/go-zglob"
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/sirupsen/logrus"
@@ -34,7 +33,7 @@ func FileOrData(maybePath string) (string, error) {
 	}
 
 	if IsFile(expandedMaybePath) {
-		contents, err := ioutil.ReadFile(expandedMaybePath)
+		contents, err := os.ReadFile(expandedMaybePath)
 		if err != nil {
 			return "", errors.WithStackTrace(err)
 		}
@@ -67,7 +66,7 @@ func EnsureDirectory(path string) error {
 	return nil
 }
 
-// Return the canonical version of the given path, relative to the given base path. That is, if the given path is a
+// CanonicalPath returns the canonical version of the given path, relative to the given base path. That is, if the given path is a
 // relative path, assume it is relative to the given base path. A canonical path is an absolute path with all relative
 // components (e.g. "../") fully resolved, which makes it safe to compare paths as strings.
 func CanonicalPath(path string, basePath string) (string, error) {
@@ -76,10 +75,49 @@ func CanonicalPath(path string, basePath string) (string, error) {
 	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return "", err
+		return "", errors.WithStackTrace(err)
 	}
 
 	return CleanPath(absPath), nil
+}
+
+// GlobCanonicalPath returns the canonical versions of the given glob paths, relative to the given base path.
+func GlobCanonicalPath(basePath string, globPaths ...string) ([]string, error) {
+	if len(globPaths) == 0 {
+		return []string{}, nil
+	}
+
+	var err error
+
+	// Ensure basePath is canonical
+	basePath, err = CanonicalPath("", basePath)
+	if err != nil {
+		return nil, err
+	}
+
+	var paths []string
+
+	for _, globPath := range globPaths {
+		// Ensure globPath are absolute
+		if !filepath.IsAbs(globPath) {
+			globPath = filepath.Join(basePath, globPath)
+		}
+
+		matches, err := zglob.Glob(globPath)
+		if err == nil {
+			paths = append(paths, matches...)
+		}
+	}
+
+	// Make sure all paths are canonical
+	for i := range paths {
+		paths[i], err = CanonicalPath(paths[i], basePath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return paths, nil
 }
 
 // Return the canonical version of the given paths, relative to the given base path. That is, if a given path is a
@@ -113,7 +151,7 @@ func Grep(regex *regexp.Regexp, glob string) (bool, error) {
 		if IsDir(match) {
 			continue
 		}
-		bytes, err := ioutil.ReadFile(match)
+		bytes, err := os.ReadFile(match)
 		if err != nil {
 			return false, errors.WithStackTrace(err)
 		}
@@ -167,7 +205,7 @@ func GetPathRelativeTo(path string, basePath string) (string, error) {
 
 // Return the contents of the file at the given path as a string
 func ReadFileAsString(path string) (string, error) {
-	bytes, err := ioutil.ReadFile(path)
+	bytes, err := os.ReadFile(path)
 	if err != nil {
 		return "", errors.WithStackTraceAndPrefix(err, "Error reading file at path %s", path)
 	}
@@ -251,9 +289,14 @@ func CopyFolderContentsWithFilter(source, destination, manifestFile string, filt
 	if err := manifest.Create(); err != nil {
 		return errors.WithStackTrace(err)
 	}
-	defer manifest.Close()
+	defer func(manifest *fileManifest) {
+		err := manifest.Close()
+		if err != nil {
+			GlobalFallbackLogEntry.Warnf("Error closing manifest file: %v", err)
+		}
+	}(manifest)
 
-	// Why use filepath.Glob here? The original implementation used ioutil.ReadDir, but that method calls lstat on all
+	// Why use filepath.Glob here? The original implementation used os.ReadDir, but that method calls lstat on all
 	// the files/folders in the directory, including files/folders you may want to explicitly skip. The next attempt
 	// was to use filepath.Walk, but that doesn't work because it ignores symlinks. So, now we turn to filepath.Glob.
 	files, err := filepath.Glob(fmt.Sprintf("%s/*", source))
@@ -329,7 +372,7 @@ func TerragruntExcludes(path string) bool {
 
 // Copy a file from source to destination
 func CopyFile(source string, destination string) error {
-	contents, err := ioutil.ReadFile(source)
+	contents, err := os.ReadFile(source)
 	if err != nil {
 		return errors.WithStackTrace(err)
 	}
@@ -344,7 +387,7 @@ func WriteFileWithSamePermissions(source string, destination string, contents []
 		return errors.WithStackTrace(err)
 	}
 
-	return ioutil.WriteFile(destination, contents, fileInfo.Mode())
+	return os.WriteFile(destination, contents, fileInfo.Mode())
 }
 
 // Windows systems use \ as the path separator *nix uses /
@@ -475,7 +518,12 @@ func (manifest *fileManifest) clean(manifestPath string) error {
 	}
 	// remove the manifest itself
 	// it will run after the close defer
-	defer os.Remove(manifestPath)
+	defer func(name string) {
+		err := os.Remove(name)
+		if err != nil {
+			GlobalFallbackLogEntry.Warnf("Error removing manifest file %s: %v", name, err)
+		}
+	}(manifestPath)
 
 	return nil
 }

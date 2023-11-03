@@ -2,10 +2,10 @@ package util
 
 import (
 	"errors"
-	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"fmt"
@@ -66,6 +66,44 @@ func TestCanonicalPath(t *testing.T) {
 		actual, err := CanonicalPath(testCase.path, testCase.basePath)
 		assert.Nil(t, err, "Unexpected error for path %s and basePath %s: %v", testCase.path, testCase.basePath, err)
 		assert.Equal(t, testCase.expected, actual, "For path %s and basePath %s", testCase.path, testCase.basePath)
+	}
+}
+
+func TestGlobCanonicalPath(t *testing.T) {
+	t.Parallel()
+
+	basePath := "testdata/fixture-glob-canonical"
+
+	expectedHelper := func(path string) string {
+		basePath, err := filepath.Abs(basePath)
+		assert.NoError(t, err)
+		return filepath.Join(basePath, path)
+	}
+
+	testCases := []struct {
+		paths    []string
+		expected []string
+	}{
+		{[]string{"module-a", "module-b/module-b-child/.."}, []string{expectedHelper("module-a"), expectedHelper("module-b")}},
+		{[]string{"*-a", "*-b"}, []string{expectedHelper("module-a"), expectedHelper("module-b")}},
+		{[]string{"module-*"}, []string{expectedHelper("module-a"), expectedHelper("module-b")}},
+		{[]string{"module-*/*.hcl"}, []string{expectedHelper("module-a/terragrunt.hcl"), expectedHelper("module-b/terragrunt.hcl")}},
+		{[]string{"module-*/**/*.hcl"}, []string{expectedHelper("module-a/terragrunt.hcl"), expectedHelper("module-b/terragrunt.hcl"), expectedHelper("module-b/module-b-child/terragrunt.hcl")}},
+	}
+
+	for _, testCase := range testCases {
+		actual, err := GlobCanonicalPath(basePath, testCase.paths...)
+
+		sort.Slice(actual, func(i, j int) bool {
+			return actual[i] < actual[j]
+		})
+
+		sort.Slice(testCase.expected, func(i, j int) bool {
+			return testCase.expected[i] < testCase.expected[j]
+		})
+
+		assert.Nil(t, err, "Unexpected error for paths %s and basePath %s: %v", testCase.paths, basePath, err)
+		assert.Equal(t, testCase.expected, actual, "For path %s and basePath %s", testCase.paths, basePath)
 	}
 }
 
@@ -137,11 +175,11 @@ func TestFileManifest(t *testing.T) {
 	var testfiles []string
 
 	// create temp dir
-	dir, err := ioutil.TempDir("", ".terragrunt-test-dir")
+	dir, err := os.MkdirTemp("", ".terragrunt-test-dir")
 	require.NoError(t, err)
 	for _, file := range []string{"file1", "file2"} {
 		// create temp files in the dir
-		f, err := ioutil.TempFile(dir, file)
+		f, err := os.CreateTemp(dir, file)
 		assert.NoError(t, err, f.Close())
 		testfiles = append(testfiles, f.Name())
 	}

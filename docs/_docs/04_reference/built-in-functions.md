@@ -46,6 +46,8 @@ Terragrunt allows you to use built-in functions anywhere in `terragrunt.hcl`, ju
 
   - [get\_terraform\_command()](#get_terraform_command)
 
+  - [get\_default\_retryable\_errors()](#get_default_retryable_errors)
+
   - [get\_terraform\_cli\_args()](#get_terraform_cli_args)
 
   - [get\_aws\_account\_id()](#get_aws_account_id)
@@ -61,6 +63,8 @@ Terragrunt allows you to use built-in functions anywhere in `terragrunt.hcl`, ju
   - [sops\_decrypt\_file()](#sops_decrypt_file)
 
   - [get\_terragrunt\_source\_cli\_flag()](#get_terragrunt_source_cli_flag)
+
+  - [read\_tfvars\_file()](#read_tfvars_file)
 
 ## Terraform built-in functions
 
@@ -596,6 +600,14 @@ inputs = {
 }
 ```
 
+## get\_default\_retryable\_errors
+
+`get_default_retryable_errors()` returns default retryabled errors. Example:
+
+``` hcl
+retryable_errors = concat(get_default_retryable_errors(), ["my custom error"])
+```
+
 ## get\_aws\_caller\_identity\_user\_id
 
 `get_aws_caller_identity_user_id()` returns the UserId of the AWS identity associated with the current set of credentials. Example:
@@ -809,3 +821,46 @@ Some example use cases are:
 - Setting debug logging when doing local development.
 - Adjusting the kubernetes provider configuration so that it targets minikube instead of real clusters.
 - Providing special mocks pulled in from the local dev source (e.g., something like `mock_outputs = jsondecode(file("${get_terragrunt_source_cli_arg()}/dependency_mocks/vpc.json"))`).
+
+
+## read\_tfvars\_file
+
+`read_tfvars_file(file_path)` reads a `.tfvars` or `.tfvars.json` file and returns a map of the variables defined in it.
+
+This is useful for reading variables from a `.tfvars` file and merging them into the inputs or to use them in a `locals` block:
+
+```hcl
+
+locals {
+  inputs_from_tfvars = jsondecode(read_tfvars_file("common.tfvars"))
+}
+
+inputs = merge(
+  local.inputs_from_tfvars,
+  {
+    # additional inputs
+  }
+)
+```
+
+Another example:
+
+```hcl
+
+locals {
+  backend = jsondecode(read_tfvars_file("backend.tfvars"))
+}
+
+remote_state {
+  backend = "s3"
+  config = {
+    bucket         = "${get_env("TG_BUCKET_PREFIX", "tf-bucket")}-${get_aws_account_id()}"
+    key            = "${path_relative_to_include()}/terraform-${local.aws_region}.tfstate"
+    region         = local.backend.region
+  }
+  generate = {
+    path      = "backend.tf"
+    if_exists = "overwrite_terragrunt"
+  }
+}
+```
