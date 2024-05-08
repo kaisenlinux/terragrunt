@@ -17,7 +17,10 @@ import (
 	"github.com/gruntwork-io/terragrunt/util"
 )
 
-var forcedRegexp = regexp.MustCompile(`^([A-Za-z0-9]+)::(.+)$`)
+var (
+	forcedRegexp     = regexp.MustCompile(`^([A-Za-z0-9]+)::(.+)$`)
+	httpSchemeRegexp = regexp.MustCompile(`(?i)^https?://`)
+)
 
 const matchCount = 2
 
@@ -145,12 +148,12 @@ func NewSource(source string, downloadDir string, workingDir string, logger *log
 		return nil, err
 	}
 
-	canonicalSourceUrl, err := toSourceUrl(source, canonicalWorkingDir)
+	canonicalSourceUrl, err := ToSourceUrl(source, canonicalWorkingDir)
 	if err != nil {
 		return nil, err
 	}
 
-	rootSourceUrl, modulePath, err := splitSourceUrl(canonicalSourceUrl, logger)
+	rootSourceUrl, modulePath, err := SplitSourceUrl(canonicalSourceUrl, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +190,10 @@ func NewSource(source string, downloadDir string, workingDir string, logger *log
 
 // Convert the given source into a URL struct. This method should be able to handle all source URLs that the terraform
 // init command can handle, parsing local file paths, Git paths, and HTTP URLs correctly.
-func toSourceUrl(source string, workingDir string) (*url.URL, error) {
+func ToSourceUrl(source string, workingDir string) (*url.URL, error) {
+	// we need to remove the http(s) scheme to allow `getter.Detect` to add the source type
+	source = httpSchemeRegexp.ReplaceAllString(source, "")
+
 	// The go-getter library is what Terraform's init command uses to download source URLs. Use that library to
 	// parse the URL.
 	rawSourceUrlWithGetter, err := getter.Detect(source, workingDir, getter.Detectors)
@@ -234,7 +240,7 @@ func IsLocalSource(sourceUrl *url.URL) bool {
 // (//), which typically represents the root of a modules repo (e.g. github.com/foo/infrastructure-modules) and the
 // path is everything after the double slash. If there is no double-slash in the URL, the root repo is the entire
 // sourceUrl and the path is an empty string.
-func splitSourceUrl(sourceUrl *url.URL, logger *logrus.Entry) (*url.URL, string, error) {
+func SplitSourceUrl(sourceUrl *url.URL, logger *logrus.Entry) (*url.URL, string, error) {
 	pathSplitOnDoubleSlash := strings.SplitN(sourceUrl.Path, "//", 2)
 
 	if len(pathSplitOnDoubleSlash) > 1 {

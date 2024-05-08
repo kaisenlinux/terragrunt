@@ -2,11 +2,19 @@ package configstack
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/gruntwork-io/go-commons/collections"
+
+	"github.com/gruntwork-io/terragrunt/telemetry"
+	"github.com/gruntwork-io/terragrunt/terraform"
 
 	"github.com/gruntwork-io/go-commons/errors"
 	"github.com/gruntwork-io/terragrunt/config"
@@ -84,8 +92,19 @@ func (stack *Stack) Graph(terragruntOptions *options.TerragruntOptions) {
 	}
 }
 
-func (stack *Stack) Run(terragruntOptions *options.TerragruntOptions) error {
+func (stack *Stack) Run(ctx context.Context, terragruntOptions *options.TerragruntOptions) error {
 	stackCmd := terragruntOptions.TerraformCommand
+
+	// prepare folder for output hierarchy if output folder is set
+	if terragruntOptions.OutputFolder != "" {
+		for _, module := range stack.Modules {
+			planFile := outputFile(terragruntOptions, module)
+			planDir := filepath.Dir(planFile)
+			if err := os.MkdirAll(planDir, os.ModePerm); err != nil {
+				return err
+			}
+		}
+	}
 
 	// For any command that needs input, run in non-interactive mode to avoid cominglint stdin across multiple
 	// concurrent runs.
@@ -100,16 +119,16 @@ func (stack *Stack) Run(terragruntOptions *options.TerragruntOptions) error {
 	// This is not ideal, but until we have a better way of handling interactivity with run-all, we take the evil of
 	// having a global prompt (managed in cli/cli_app.go) be the gate keeper.
 	switch stackCmd {
-	case "apply", "destroy":
+	case terraform.CommandNameApply, terraform.CommandNameDestroy:
 		// to support potential positional args in the args list, we append the input=false arg after the first element,
 		// which is the target command.
 		if terragruntOptions.RunAllAutoApprove {
 			terragruntOptions.TerraformCliArgs = util.StringListInsert(terragruntOptions.TerraformCliArgs, "-auto-approve", 1)
 		}
 		stack.syncTerraformCliArgs(terragruntOptions)
-	}
-
-	if stackCmd == "plan" {
+	case terraform.CommandNameShow:
+		stack.syncTerraformCliArgs(terragruntOptions)
+	case terraform.CommandNamePlan:
 		// We capture the out stream for each module
 		errorStreams := make([]bytes.Buffer, len(stack.Modules))
 		for n, module := range stack.Modules {
@@ -124,11 +143,11 @@ func (stack *Stack) Run(terragruntOptions *options.TerragruntOptions) error {
 
 	switch {
 	case terragruntOptions.IgnoreDependencyOrder:
-		return RunModulesIgnoreOrder(stack.Modules, terragruntOptions.Parallelism)
-	case stackCmd == "destroy":
-		return RunModulesReverseOrder(stack.Modules, terragruntOptions.Parallelism)
+		return RunModulesIgnoreOrder(ctx, terragruntOptions, stack.Modules, terragruntOptions.Parallelism)
+	case stackCmd == terraform.CommandNameDestroy:
+		return RunModulesReverseOrder(ctx, terragruntOptions, stack.Modules, terragruntOptions.Parallelism)
 	default:
-		return RunModules(stack.Modules, terragruntOptions.Parallelism)
+		return RunModules(ctx, terragruntOptions, stack.Modules, terragruntOptions.Parallelism)
 	}
 }
 
@@ -168,21 +187,82 @@ func (stack *Stack) CheckForCycles() error {
 
 // Find all the Terraform modules in the subfolders of the working directory of the given TerragruntOptions and
 // assemble them into a Stack object that can be applied or destroyed in a single command
-func FindStackInSubfolders(terragruntOptions *options.TerragruntOptions, childTerragruntConfig *config.TerragruntConfig) (*Stack, error) {
-	terragruntConfigFiles, err := config.FindConfigFilesInPath(terragruntOptions.WorkingDir, terragruntOptions)
+func FindStackInSubfolders(ctx context.Context, terragruntOptions *options.TerragruntOptions, childTerragruntConfig *config.TerragruntConfig) (*Stack, error) {
+	var terragruntConfigFiles []string
+
+	err := telemetry.Telemetry(ctx, terragruntOptions, "find_files_in_path", map[string]interface{}{
+		"working_dir": terragruntOptions.WorkingDir,
+	}, func(childCtx context.Context) error {
+		result, err := config.FindConfigFilesInPath(terragruntOptions.WorkingDir, terragruntOptions)
+		if err != nil {
+			return err
+		}
+		terragruntConfigFiles = result
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	howThesePathsWereFound := fmt.Sprintf("Terragrunt config file found in a subdirectory of %s", terragruntOptions.WorkingDir)
-	return createStackForTerragruntConfigPaths(terragruntOptions.WorkingDir, terragruntConfigFiles, terragruntOptions, childTerragruntConfig, howThesePathsWereFound)
+	return createStackForTerragruntConfigPaths(ctx, terragruntOptions.WorkingDir, terragruntConfigFiles, terragruntOptions, childTerragruntConfig, howThesePathsWereFound)
 }
 
 // Sync the TerraformCliArgs for each module in the stack to match the provided terragruntOptions struct.
 func (stack *Stack) syncTerraformCliArgs(terragruntOptions *options.TerragruntOptions) {
 	for _, module := range stack.Modules {
-		module.TerragruntOptions.TerraformCliArgs = terragruntOptions.TerraformCliArgs
+		module.TerragruntOptions.TerraformCliArgs = collections.MakeCopyOfList(terragruntOptions.TerraformCliArgs)
+
+		planFile := modulePlanFile(terragruntOptions, module)
+
+		if planFile != "" {
+			terragruntOptions.Logger.Debugf("Using output file %s for module %s", planFile, module.TerragruntOptions.TerragruntConfigPath)
+			if module.TerragruntOptions.TerraformCommand == terraform.CommandNamePlan {
+				// for plan command add -out=<file> to the terraform cli args
+				module.TerragruntOptions.TerraformCliArgs = util.StringListInsert(module.TerragruntOptions.TerraformCliArgs, fmt.Sprintf("-out=%s", planFile), len(module.TerragruntOptions.TerraformCliArgs))
+			} else {
+				module.TerragruntOptions.TerraformCliArgs = util.StringListInsert(module.TerragruntOptions.TerraformCliArgs, planFile, len(module.TerragruntOptions.TerraformCliArgs))
+			}
+		}
 	}
+}
+
+// modulePlanFile - return plan file location, if output folder is set
+func modulePlanFile(terragruntOptions *options.TerragruntOptions, module *TerraformModule) string {
+	planFile := ""
+
+	// set plan file location if output folder is set
+	planFile = outputFile(terragruntOptions, module)
+
+	planCommand := module.TerragruntOptions.TerraformCommand == terraform.CommandNamePlan || module.TerragruntOptions.TerraformCommand == terraform.CommandNameShow
+
+	// in case if JSON output is enabled, and not specified planFile, save plan in working dir
+	if planCommand && planFile == "" && module.TerragruntOptions.JsonOutputFolder != "" {
+		planFile = terraform.TerraformPlanFile
+	}
+	return planFile
+}
+
+// outputFile - return plan file location, if output folder is set
+func outputFile(opts *options.TerragruntOptions, module *TerraformModule) string {
+	planFile := ""
+	if opts.OutputFolder != "" {
+		path, _ := filepath.Rel(opts.WorkingDir, module.Path)
+		dir := filepath.Join(opts.OutputFolder, path)
+		planFile = filepath.Join(dir, terraform.TerraformPlanFile)
+	}
+	return planFile
+}
+
+// outputJsonFile - return plan JSON file location, if JSON output folder is set
+func outputJsonFile(opts *options.TerragruntOptions, module *TerraformModule) string {
+	jsonPlanFile := ""
+	if opts.JsonOutputFolder != "" {
+		path, _ := filepath.Rel(opts.WorkingDir, module.Path)
+		dir := filepath.Join(opts.JsonOutputFolder, path)
+		jsonPlanFile = filepath.Join(dir, terraform.TerraformPlanJsonFile)
+	}
+	return jsonPlanFile
 }
 
 // getModuleRunGraph converts the module list to a graph that shows the order in which the modules will be
@@ -193,7 +273,7 @@ func (stack *Stack) getModuleRunGraph(terraformCommand string) ([][]*TerraformMo
 	var moduleRunGraph map[string]*runningModule
 	var graphErr error
 	switch terraformCommand {
-	case "destroy":
+	case terraform.CommandNameDestroy:
 		moduleRunGraph, graphErr = toRunningModules(stack.Modules, ReverseOrder)
 	default:
 		moduleRunGraph, graphErr = toRunningModules(stack.Modules, NormalOrder)
@@ -263,19 +343,39 @@ func (stack *Stack) getModuleRunGraph(terraformCommand string) ([][]*TerraformMo
 
 // Find all the Terraform modules in the folders that contain the given Terragrunt config files and assemble those
 // modules into a Stack object that can be applied or destroyed in a single command
-func createStackForTerragruntConfigPaths(path string, terragruntConfigPaths []string, terragruntOptions *options.TerragruntOptions, childTerragruntConfig *config.TerragruntConfig, howThesePathsWereFound string) (*Stack, error) {
-	if len(terragruntConfigPaths) == 0 {
-		return nil, errors.WithStackTrace(NoTerraformModulesFound)
-	}
+func createStackForTerragruntConfigPaths(ctx context.Context, path string, terragruntConfigPaths []string, terragruntOptions *options.TerragruntOptions, childTerragruntConfig *config.TerragruntConfig, howThesePathsWereFound string) (*Stack, error) {
+	var stack *Stack
+	err := telemetry.Telemetry(ctx, terragruntOptions, "create_stack_for_terragrunt_config_paths", map[string]interface{}{
+		"working_dir": terragruntOptions.WorkingDir,
+		"path":        path,
+	}, func(childCtx context.Context) error {
 
-	modules, err := ResolveTerraformModules(terragruntConfigPaths, terragruntOptions, childTerragruntConfig, howThesePathsWereFound)
+		if len(terragruntConfigPaths) == 0 {
+			return errors.WithStackTrace(NoTerraformModulesFound)
+		}
+
+		modules, err := ResolveTerraformModules(ctx, terragruntConfigPaths, terragruntOptions, childTerragruntConfig, howThesePathsWereFound)
+		if err != nil {
+			return errors.WithStackTrace(err)
+		}
+		stack = &Stack{Path: path, Modules: modules}
+
+		return nil
+	})
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStackTrace(err)
 	}
-
-	stack := &Stack{Path: path, Modules: modules}
-	if err := stack.CheckForCycles(); err != nil {
-		return nil, err
+	err = telemetry.Telemetry(ctx, terragruntOptions, "check_for_cycles", map[string]interface{}{
+		"working_dir": terragruntOptions.WorkingDir,
+		"stack_path":  stack.Path,
+	}, func(childCtx context.Context) error {
+		if err := stack.CheckForCycles(); err != nil {
+			return errors.WithStackTrace(err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.WithStackTrace(err)
 	}
 
 	return stack, nil

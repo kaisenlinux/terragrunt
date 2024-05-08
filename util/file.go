@@ -18,9 +18,12 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const TerraformLockFile = ".terraform.lock.hcl"
-
-const TerragruntCacheDir = ".terragrunt-cache"
+const (
+	TerraformLockFile     = ".terraform.lock.hcl"
+	TerragruntCacheDir    = ".terragrunt-cache"
+	DefaultBoilerplateDir = ".boilerplate"
+	TfFileExtension       = ".tf"
+)
 
 // FileOrData will read the contents of the data of the given arg if it is a file, and otherwise return the contents by
 // itself. This will return an error if the given path is a directory.
@@ -402,7 +405,7 @@ func JoinPath(elem ...string) string {
 // E.g. "/foo/bar/boo.txt" -> ["", "foo", "bar", "boo.txt"]
 // Notice that if path is absolute the resulting list will begin with an empty string.
 func SplitPath(path string) []string {
-	return strings.Split(CleanPath(path), string(filepath.Separator))
+	return strings.Split(CleanPath(path), filepath.ToSlash(string(filepath.Separator)))
 }
 
 // Use this function when cleaning paths to ensure the returned path uses / as the path separator to improve cross-platform compatibility
@@ -492,7 +495,15 @@ func (manifest *fileManifest) clean(manifestPath string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	// cleaning manifest file
+	defer func(name string) {
+		if err := file.Close(); err != nil {
+			GlobalFallbackLogEntry.Warnf("Error closing file %s: %v", name, err)
+		}
+		if err := os.Remove(name); err != nil {
+			GlobalFallbackLogEntry.Warnf("Error removing manifest file %s: %v", name, err)
+		}
+	}(manifestPath)
 	decoder := gob.NewDecoder(file)
 	// decode paths one by one
 	for {
@@ -516,15 +527,6 @@ func (manifest *fileManifest) clean(manifestPath string) error {
 			}
 		}
 	}
-	// remove the manifest itself
-	// it will run after the close defer
-	defer func(name string) {
-		err := os.Remove(name)
-		if err != nil {
-			GlobalFallbackLogEntry.Warnf("Error removing manifest file %s: %v", name, err)
-		}
-	}(manifestPath)
-
 	return nil
 }
 
@@ -591,4 +593,55 @@ func CopyLockFile(sourceFolder string, destinationFolder string, logger *logrus.
 	}
 
 	return nil
+}
+
+// ListTfFiles returns a list of all TF files in the specified directory.
+func ListTfFiles(directoryPath string) ([]string, error) {
+	var tfFiles []string
+
+	err := filepath.Walk(directoryPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && filepath.Ext(path) == TfFileExtension {
+			tfFiles = append(tfFiles, path)
+		}
+		return nil
+	})
+
+	return tfFiles, err
+}
+
+// IsDirectoryEmpty - returns true if the given path exists and is a empty directory.
+func IsDirectoryEmpty(dirPath string) (bool, error) {
+	dir, err := os.Open(dirPath)
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		_ = dir.Close()
+	}()
+
+	_, err = dir.Readdir(1)
+	if err == nil {
+		return false, nil
+	}
+	return true, nil
+}
+
+// GetCacheDir returns the global terragrunt cache directory for the current user.
+func GetCacheDir() (string, error) {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return "", errors.WithStackTrace(err)
+	}
+	cacheDir = filepath.Join(cacheDir, "terragrunt")
+
+	if !FileExists(cacheDir) {
+		if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
+			return "", errors.WithStackTrace(err)
+		}
+	}
+
+	return cacheDir, nil
 }

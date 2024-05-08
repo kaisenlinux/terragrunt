@@ -1,6 +1,7 @@
 package terraform
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/url"
@@ -238,6 +239,25 @@ func TestDownloadTerraformSourceIfNecessaryRemoteUrlOverrideSource(t *testing.T)
 	testDownloadTerraformSourceIfNecessary(t, canonicalUrl, downloadDir, true, "# Hello, World", true)
 }
 
+func TestDownloadTerraformSourceIfNecessaryInvalidTerraformSource(t *testing.T) {
+	t.Parallel()
+
+	canonicalUrl := "github.com/totallyfakedoesnotexist/notreal.git//foo?ref=v1.2.3"
+	downloadDir := tmpDir(t)
+	defer os.Remove(downloadDir)
+
+	copyFolder(t, "../../../test/fixture-download-source/hello-world-version-remote", downloadDir)
+
+	terraformSource, terragruntOptions, terragruntConfig, err := createConfig(t, canonicalUrl, downloadDir, false)
+
+	assert.NoError(t, err)
+
+	err = downloadTerraformSourceIfNecessary(context.Background(), terraformSource, terragruntOptions, terragruntConfig)
+	assert.Error(t, err)
+	_, ok := errors.Unwrap(err).(DownloadingTerraformSourceErr)
+	assert.True(t, ok)
+}
+
 func TestInvalidModulePath(t *testing.T) {
 	t.Parallel()
 
@@ -248,11 +268,11 @@ func TestInvalidModulePath(t *testing.T) {
 	copyFolder(t, "../../../test/fixture-download-source/hello-world-version-remote", downloadDir)
 
 	terraformSource, _, _, err := createConfig(t, canonicalUrl, downloadDir, false)
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	terraformSource.WorkingDir += "/not-existing-path"
 
 	err = validateWorkingDir(terraformSource)
-	assert.NotNil(t, err)
+	assert.Error(t, err)
 	_, ok := errors.Unwrap(err).(WorkingDirNotFound)
 	assert.True(t, ok)
 }
@@ -267,11 +287,11 @@ func TestDownloadInvalidPathToFilePath(t *testing.T) {
 	copyFolder(t, "../../../test/fixture-download-source/hello-world-version-remote", downloadDir)
 
 	terraformSource, _, _, err := createConfig(t, canonicalUrl, downloadDir, false)
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	terraformSource.WorkingDir += "/main.tf"
 
 	err = validateWorkingDir(terraformSource)
-	assert.NotNil(t, err)
+	assert.Error(t, err)
 	_, ok := errors.Unwrap(err).(WorkingDirNotDir)
 	assert.True(t, ok)
 }
@@ -345,7 +365,7 @@ func testDownloadTerraformSourceIfNecessary(t *testing.T, canonicalUrl string, d
 
 	assert.NoError(t, err)
 
-	err = downloadTerraformSourceIfNecessary(terraformSource, terragruntOptions, terragruntConfig)
+	err = downloadTerraformSourceIfNecessary(context.Background(), terraformSource, terragruntOptions, terragruntConfig)
 	require.NoError(t, err, "For terraform source %v: %v", terraformSource, err)
 
 	expectedFilePath := util.JoinPath(downloadDir, "main.tf")
@@ -384,7 +404,7 @@ func createConfig(t *testing.T, canonicalUrl string, downloadDir string, sourceU
 		},
 	}
 
-	err = PopulateTerraformVersion(terragruntOptions)
+	err = PopulateTerraformVersion(context.Background(), terragruntOptions)
 	assert.Nil(t, err, "For terraform source %v: %v", terraformSource, err)
 	return terraformSource, terragruntOptions, terragruntConfig, err
 }

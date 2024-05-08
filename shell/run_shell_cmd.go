@@ -2,23 +2,23 @@ package shell
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
+	"github.com/gruntwork-io/terragrunt/telemetry"
 
-	"github.com/gruntwork-io/go-commons/collections"
+	"github.com/hashicorp/go-version"
+
 	"github.com/gruntwork-io/go-commons/errors"
 	"github.com/gruntwork-io/terragrunt/options"
-	"github.com/gruntwork-io/terragrunt/terraform"
 	"github.com/gruntwork-io/terragrunt/util"
 	"github.com/hashicorp/go-multierror"
 	"github.com/sirupsen/logrus"
@@ -28,7 +28,14 @@ import (
 // kill -INT <pid>  # sends SIGINT only to the main process
 // kill -INT -<pid> # sends SIGINT to the process group
 // Since we cannot know how the signal is sent, we should give `terraform` time to gracefully exit if it receives the signal directly from the shell, to avoid sending the second interrupt signal to `terraform`.
-const signalForwardingDelay = time.Second * 30
+const SignalForwardingDelay = time.Second * 30
+
+const (
+	gitPrefix = "git::"
+	refsTags  = "refs/tags/"
+
+	tagSplitPart = 2
+)
 
 // Commands that implement a REPL need a pseudo TTY when run as a subprocess in order for the readline properties to be
 // preserved. This is a list of terraform commands that have this property, which is used to determine if terragrunt
@@ -37,40 +44,39 @@ var terraformCommandsThatNeedPty = []string{
 	"console",
 }
 
-var terraformInitMutex sync.Mutex
-
 // Run the given Terraform command
-func RunTerraformCommand(terragruntOptions *options.TerragruntOptions, args ...string) error {
+func RunTerraformCommand(ctx context.Context, terragruntOptions *options.TerragruntOptions, args ...string) error {
 	needPTY, err := isTerraformCommandThatNeedsPty(args)
 	if err != nil {
 		return err
 	}
 
-	_, err = RunShellCommandWithOutput(terragruntOptions, "", false, needPTY, terragruntOptions.TerraformPath, args...)
+	_, err = RunShellCommandWithOutput(ctx, terragruntOptions, "", false, needPTY, terragruntOptions.TerraformPath, args...)
 	return err
 }
 
 // Run the given shell command
-func RunShellCommand(terragruntOptions *options.TerragruntOptions, command string, args ...string) error {
-	_, err := RunShellCommandWithOutput(terragruntOptions, "", false, false, command, args...)
+func RunShellCommand(ctx context.Context, terragruntOptions *options.TerragruntOptions, command string, args ...string) error {
+	_, err := RunShellCommandWithOutput(ctx, terragruntOptions, "", false, false, command, args...)
 	return err
 }
 
 // Run the given Terraform command, writing its stdout/stderr to the terminal AND returning stdout/stderr to this
 // method's caller
-func RunTerraformCommandWithOutput(terragruntOptions *options.TerragruntOptions, args ...string) (*CmdOutput, error) {
+func RunTerraformCommandWithOutput(ctx context.Context, terragruntOptions *options.TerragruntOptions, args ...string) (*CmdOutput, error) {
 	needPTY, err := isTerraformCommandThatNeedsPty(args)
 	if err != nil {
 		return nil, err
 	}
 
-	return RunShellCommandWithOutput(terragruntOptions, "", false, needPTY, terragruntOptions.TerraformPath, args...)
+	return RunShellCommandWithOutput(ctx, terragruntOptions, "", false, needPTY, terragruntOptions.TerraformPath, args...)
 }
 
 // Run the specified shell command with the specified arguments. Connect the command's stdin, stdout, and stderr to
 // the currently running app. The command can be executed in a custom working directory by using the parameter
 // `workingDir`. Terragrunt working directory will be assumed if empty string.
 func RunShellCommandWithOutput(
+	ctx context.Context,
 	terragruntOptions *options.TerragruntOptions,
 	workingDir string,
 	suppressStdout bool,
@@ -78,93 +84,111 @@ func RunShellCommandWithOutput(
 	command string,
 	args ...string,
 ) (*CmdOutput, error) {
-	// Terrafrom `init` command with the plugin cache directory is not guaranteed to be concurrency safe.
-	// The provider installer's behavior in environments with multiple terraform init calls is undefined.
-	// Thus, terraform `init` commands must be executed sequentially, even if `--terragrunt-parallelism` is greater than 1.
-	if command == "terraform" && collections.ListContainsElement(args, "init") && terraform.IsPluginCacheUsed() {
-		defer terraformInitMutex.Unlock()
-		terraformInitMutex.Lock()
+	if command == terragruntOptions.TerraformPath {
+		if fn := TerraformCommandHookFromContext(ctx); fn != nil {
+			return fn(ctx, terragruntOptions, args)
+		}
 	}
 
-	terragruntOptions.Logger.Debugf("Running command: %s %s", command, strings.Join(args, " "))
-	if suppressStdout {
-		terragruntOptions.Logger.Debugf("Command output will be suppressed.")
-	}
-
-	var stdoutBuf bytes.Buffer
-	var stderrBuf bytes.Buffer
-
-	cmd := exec.Command(command, args...)
-
-	// TODO: consider adding prefix from terragruntOptions logger to stdout and stderr
-	cmd.Env = toEnvVarsList(terragruntOptions.Env)
-
-	var errWriter = terragruntOptions.ErrWriter
-	var outWriter = terragruntOptions.Writer
-	var prefix = ""
-	if terragruntOptions.IncludeModulePrefix {
-		prefix = terragruntOptions.OutputPrefix
-	}
-
+	var output *CmdOutput = nil
+	var commandDir = workingDir
 	if workingDir == "" {
-		cmd.Dir = terragruntOptions.WorkingDir
-	} else {
-		cmd.Dir = workingDir
+		commandDir = terragruntOptions.WorkingDir
 	}
-
-	// Inspired by https://blog.kowalczyk.info/article/wOYk/advanced-command-execution-in-go-with-osexec.html
-	cmdStderr := io.MultiWriter(withPrefix(errWriter, prefix), &stderrBuf)
-	var cmdStdout io.Writer
-	if !suppressStdout {
-		cmdStdout = io.MultiWriter(withPrefix(outWriter, prefix), &stdoutBuf)
-	} else {
-		cmdStdout = io.MultiWriter(&stdoutBuf)
-	}
-
-	// If we need to allocate a ptty for the command, route through the ptty routine. Otherwise, directly call the
-	// command.
-	if allocatePseudoTty {
-		if err := runCommandWithPTTY(terragruntOptions, cmd, cmdStdout, cmdStderr); err != nil {
-			return nil, err
+	err := telemetry.Telemetry(ctx, terragruntOptions, fmt.Sprintf("run_%s", command), map[string]interface{}{
+		"command": command,
+		"args":    fmt.Sprintf("%v", args),
+		"dir":     commandDir,
+	}, func(childCtx context.Context) error {
+		terragruntOptions.Logger.Debugf("Running command: %s %s", command, strings.Join(args, " "))
+		if suppressStdout {
+			terragruntOptions.Logger.Debugf("Command output will be suppressed.")
 		}
-	} else {
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = cmdStdout
-		cmd.Stderr = cmdStderr
-		if err := cmd.Start(); err != nil {
-			// bad path, binary not executable, &c
-			return nil, errors.WithStackTrace(err)
-		}
-	}
 
-	// Make sure to forward signals to the subcommand.
-	cmdChannel := make(chan error) // used for closing the signals forwarder goroutine
-	signalChannel := NewSignalsForwarder(forwardSignals, cmd, terragruntOptions.Logger, cmdChannel)
-	defer func(signalChannel *SignalsForwarder) {
-		err := signalChannel.Close()
+		var stdoutBuf bytes.Buffer
+		var stderrBuf bytes.Buffer
+
+		cmd := exec.Command(command, args...)
+
+		// TODO: consider adding prefix from terragruntOptions logger to stdout and stderr
+		cmd.Env = toEnvVarsList(terragruntOptions.Env)
+
+		var outWriter = terragruntOptions.Writer
+		var errWriter = terragruntOptions.ErrWriter
+
+		// redirect output through logger with json wrapping
+		if terragruntOptions.JsonLogFormat && terragruntOptions.TerraformLogsToJson {
+
+			jsonWriter := terragruntOptions.Logger.Logger.WithField("workingDir", terragruntOptions.WorkingDir).WithField("executedCommandArgs", args)
+			jsonWriter.Logger.Out = outWriter
+			outWriter = jsonWriter.Writer()
+
+			jsonErrorWriter := terragruntOptions.Logger.Logger.WithField("workingDir", terragruntOptions.WorkingDir).WithField("executedCommandArgs", args)
+			jsonErrorWriter.Logger.Out = errWriter
+			errWriter = jsonErrorWriter.WriterLevel(logrus.ErrorLevel)
+		}
+
+		var prefix = ""
+		if terragruntOptions.IncludeModulePrefix {
+			prefix = terragruntOptions.OutputPrefix
+		}
+		cmd.Dir = commandDir
+
+		// Inspired by https://blog.kowalczyk.info/article/wOYk/advanced-command-execution-in-go-with-osexec.html
+		cmdStderr := io.MultiWriter(withPrefix(errWriter, prefix), &stderrBuf)
+		var cmdStdout io.Writer
+		if !suppressStdout {
+			cmdStdout = io.MultiWriter(withPrefix(outWriter, prefix), &stdoutBuf)
+		} else {
+			cmdStdout = io.MultiWriter(&stdoutBuf)
+		}
+
+		// If we need to allocate a ptty for the command, route through the ptty routine. Otherwise, directly call the
+		// command.
+		if allocatePseudoTty {
+			if err := runCommandWithPTTY(terragruntOptions, cmd, cmdStdout, cmdStderr); err != nil {
+				return err
+			}
+		} else {
+			cmd.Stdin = os.Stdin
+			cmd.Stdout = cmdStdout
+			cmd.Stderr = cmdStderr
+			if err := cmd.Start(); err != nil {
+				// bad path, binary not executable, &c
+				return errors.WithStackTrace(err)
+			}
+		}
+
+		// Make sure to forward signals to the subcommand.
+		cmdChannel := make(chan error) // used for closing the signals forwarder goroutine
+		signalChannel := NewSignalsForwarder(InterruptSignals, cmd, terragruntOptions.Logger, cmdChannel)
+		defer func(signalChannel *SignalsForwarder) {
+			err := signalChannel.Close()
+			if err != nil {
+				terragruntOptions.Logger.Warnf("Error closing signal channel: %v", err)
+			}
+		}(&signalChannel)
+
+		err := cmd.Wait()
+		cmdChannel <- err
+
+		cmdOutput := CmdOutput{
+			Stdout: stdoutBuf.String(),
+			Stderr: stderrBuf.String(),
+		}
+
 		if err != nil {
-			terragruntOptions.Logger.Warnf("Error closing signal channel: %v", err)
+			err = ProcessExecutionError{
+				Err:        err,
+				StdOut:     stdoutBuf.String(),
+				Stderr:     stderrBuf.String(),
+				WorkingDir: cmd.Dir,
+			}
 		}
-	}(&signalChannel)
-
-	err := cmd.Wait()
-	cmdChannel <- err
-
-	cmdOutput := CmdOutput{
-		Stdout: stdoutBuf.String(),
-		Stderr: stderrBuf.String(),
-	}
-
-	if err != nil {
-		err = ProcessExecutionError{
-			Err:        err,
-			StdOut:     stdoutBuf.String(),
-			Stderr:     stderrBuf.String(),
-			WorkingDir: cmd.Dir,
-		}
-	}
-
-	return &cmdOutput, errors.WithStackTrace(err)
+		output = &cmdOutput
+		return errors.WithStackTrace(err)
+	})
+	return output, err
 }
 
 func toEnvVarsList(envVarsAsMap map[string]string) []string {
@@ -242,10 +266,8 @@ func NewSignalsForwarder(signals []os.Signal, c *exec.Cmd, logger *logrus.Entry,
 		for {
 			select {
 			case s := <-signalChannel:
-				logger.Debugf("%s signal received. Gracefully shutting down... (it can take up to %v)", cases.Title(language.English).String(s.String()), signalForwardingDelay)
-
 				select {
-				case <-time.After(signalForwardingDelay):
+				case <-time.After(SignalForwardingDelay):
 					logger.Debugf("Forward signal %v to terraform.", s)
 					err := c.Process.Signal(s)
 					if err != nil {
@@ -277,7 +299,7 @@ type CmdOutput struct {
 }
 
 // GitTopLevelDir - fetch git repository path from passed directory
-func GitTopLevelDir(terragruntOptions *options.TerragruntOptions, path string) (string, error) {
+func GitTopLevelDir(ctx context.Context, terragruntOptions *options.TerragruntOptions, path string) (string, error) {
 	stdout := bytes.Buffer{}
 	stderr := bytes.Buffer{}
 	opts, err := options.NewTerragruntOptionsWithConfigPath(path)
@@ -287,12 +309,84 @@ func GitTopLevelDir(terragruntOptions *options.TerragruntOptions, path string) (
 	opts.Env = terragruntOptions.Env
 	opts.Writer = &stdout
 	opts.ErrWriter = &stderr
-	cmd, err := RunShellCommandWithOutput(opts, path, true, false, "git", "rev-parse", "--show-toplevel")
+	cmd, err := RunShellCommandWithOutput(ctx, opts, path, true, false, "git", "rev-parse", "--show-toplevel")
 	terragruntOptions.Logger.Debugf("git show-toplevel result: \n%v\n%v\n", stdout.String(), stderr.String())
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(cmd.Stdout), nil
+}
+
+// GitRepoTags - fetch git repository tags from passed url
+func GitRepoTags(ctx context.Context, opts *options.TerragruntOptions, gitRepo *url.URL) ([]string, error) {
+	repoPath := gitRepo.String()
+	// remove git:: part if present
+	repoPath = strings.TrimPrefix(repoPath, gitPrefix)
+
+	stdout := bytes.Buffer{}
+	stderr := bytes.Buffer{}
+	gitOpts, err := options.NewTerragruntOptionsWithConfigPath(opts.WorkingDir)
+	if err != nil {
+		return nil, err
+	}
+	gitOpts.Env = opts.Env
+	gitOpts.Writer = &stdout
+	gitOpts.ErrWriter = &stderr
+
+	output, err := RunShellCommandWithOutput(ctx, opts, opts.WorkingDir, true, false, "git", "ls-remote", "--tags", repoPath)
+	if err != nil {
+		return nil, errors.WithStackTrace(err)
+	}
+	var tags []string
+	tagLines := strings.Split(output.Stdout, "\n")
+	for _, line := range tagLines {
+		fields := strings.Fields(line)
+		if len(fields) >= tagSplitPart {
+			tags = append(tags, fields[1])
+		}
+	}
+	return tags, nil
+}
+
+// GitLastReleaseTag - fetch git repository last release tag
+func GitLastReleaseTag(ctx context.Context, opts *options.TerragruntOptions, gitRepo *url.URL) (string, error) {
+	tags, err := GitRepoTags(ctx, opts, gitRepo)
+	if err != nil {
+		return "", err
+	}
+	if len(tags) == 0 {
+		return "", nil
+	}
+	return lastReleaseTag(tags), nil
+}
+
+// lastReleaseTag - return last release tag from passed tags slice.
+func lastReleaseTag(tags []string) string {
+	semverTags := extractSemVerTags(tags)
+	if len(semverTags) == 0 {
+		return ""
+	}
+	// find last semver tag
+	lastVersion := semverTags[0]
+	for _, ver := range semverTags {
+		if ver.GreaterThanOrEqual(lastVersion) {
+			lastVersion = ver
+		}
+	}
+	return lastVersion.Original()
+}
+
+// extractSemVerTags - extract semver tags from passed tags slice.
+func extractSemVerTags(tags []string) []*version.Version {
+	var semverTags []*version.Version
+	for _, tag := range tags {
+		t := strings.TrimPrefix(tag, refsTags)
+		if v, err := version.NewVersion(t); err == nil {
+			// consider only semver tags
+			semverTags = append(semverTags, v)
+		}
+	}
+	return semverTags
 }
 
 // ProcessExecutionError - error returned when a command fails, contains StdOut and StdErr

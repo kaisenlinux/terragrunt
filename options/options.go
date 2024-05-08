@@ -15,11 +15,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-var TERRAFORM_COMMANDS_WITH_SUBCOMMAND = []string{
-	"debug",
-	"force-unlock",
-	"state",
-}
+const ContextKey ctxKey = iota
 
 const (
 	DefaultMaxFoldersToCheck = 100
@@ -43,9 +39,20 @@ const (
 	minCommandLength = 2
 )
 
-const ContextKey ctxKey = iota
+var (
+	DefaultWrappedPath = identifyDefaultWrappedExecutable()
 
-var DefaultWrappedPath = identifyDefaultWrappedExecutable()
+	defaultProviderCacheRegistryNames = []string{
+		"registry.terraform.io",
+		"registry.opentofu.org",
+	}
+)
+
+var TERRAFORM_COMMANDS_WITH_SUBCOMMAND = []string{
+	"debug",
+	"force-unlock",
+	"state",
+}
 
 type ctxKey byte
 
@@ -109,8 +116,14 @@ type TerragruntOptions struct {
 	// Basic log entry
 	Logger *logrus.Entry
 
-	// Disalabe Terragrunt colors
+	// Disable Terragrunt colors
 	DisableLogColors bool
+
+	// Output Terragrunt logs in JSON format
+	JsonLogFormat bool
+
+	// Wrap Terraform logs in JSON format
+	TerraformLogsToJson bool
 
 	// Log level
 	LogLevel logrus.Level
@@ -212,7 +225,7 @@ type TerragruntOptions struct {
 	// in the cli package, which depends on almost all other packages, so we declare it here so that other
 	// packages can use the command without a direct reference back to the cli package (which would create a
 	// circular dependency).
-	RunTerragrunt func(*TerragruntOptions) error
+	RunTerragrunt func(ctx context.Context, opts *TerragruntOptions) error
 
 	// True if terragrunt should run in debug mode, writing terragrunt-debug.tfvars to working folder to help
 	// root-cause issues.
@@ -246,11 +259,47 @@ type TerragruntOptions struct {
 	// Controls if s3 bucket should be updated or skipped
 	DisableBucketUpdate bool
 
-	// Disalbes validation terraform command
+	// Disables validation terraform command
 	DisableCommandValidation bool
+
+	// Variables for usage in scaffolding.
+	ScaffoldVars []string
+
+	// Files with variables to be used in modules scaffolding.
+	ScaffoldVarFiles []string
+
+	// Root directory for graph command.
+	GraphRoot string
+
+	// Disable listing of dependent modules in render json output
+	JsonDisableDependentModules bool
+
+	// Enables Terragrunt's provider caching.
+	ProviderCache bool
+
+	// The path to store unpacked providers. The file structure is the same as terraform plugin cache dir.
+	ProviderCacheDir string
+
+	// The Token for authentication to the Terragrunt Provider Cache server.
+	ProviderCacheToken string
+
+	// The hostname of the Terragrunt Provider Cache server.
+	ProviderCacheHostname string
+
+	// The port of the Terragrunt Provider Cache server.
+	ProviderCachePort int
+
+	// The list of remote registries to cached by Terragrunt Provider Cache server.
+	ProviderCacheRegistryNames []string
+
+	// Folder to store output files.
+	OutputFolder string
+
+	// Folder to store JSON representation of output files.
+	JsonOutputFolder string
 }
 
-// IAMOptions represents options that are used by Terragrunt to assume an IAM role.
+// IAMRoleOptions represents options that are used by Terragrunt to assume an IAM role.
 type IAMRoleOptions struct {
 	// The ARN of an IAM Role to assume. Used when accessing AWS, both internally and through terraform.
 	RoleARN string
@@ -320,9 +369,15 @@ func NewTerragruntOptions() *TerragruntOptions {
 		IncludeModulePrefix:            false,
 		JSONOut:                        DefaultJSONOutName,
 		TerraformImplementation:        UnknownImpl,
-		RunTerragrunt: func(opts *TerragruntOptions) error {
+		JsonLogFormat:                  false,
+		TerraformLogsToJson:            false,
+		JsonDisableDependentModules:    false,
+		RunTerragrunt: func(ctx context.Context, opts *TerragruntOptions) error {
 			return errors.WithStackTrace(RunTerragruntCommandNotSet)
 		},
+		ProviderCacheRegistryNames: defaultProviderCacheRegistryNames,
+		OutputFolder:               "",
+		JsonOutputFolder:           "",
 	}
 }
 
@@ -445,6 +500,19 @@ func (opts *TerragruntOptions) Clone(terragruntConfigPath string) *TerragruntOpt
 		FailIfBucketCreationRequired:   opts.FailIfBucketCreationRequired,
 		DisableBucketUpdate:            opts.DisableBucketUpdate,
 		TerraformImplementation:        opts.TerraformImplementation,
+		JsonLogFormat:                  opts.JsonLogFormat,
+		TerraformLogsToJson:            opts.TerraformLogsToJson,
+		GraphRoot:                      opts.GraphRoot,
+		ScaffoldVars:                   opts.ScaffoldVars,
+		ScaffoldVarFiles:               opts.ScaffoldVarFiles,
+		JsonDisableDependentModules:    opts.JsonDisableDependentModules,
+		ProviderCache:                  opts.ProviderCache,
+		ProviderCacheToken:             opts.ProviderCacheToken,
+		ProviderCacheDir:               opts.ProviderCacheDir,
+		ProviderCacheRegistryNames:     opts.ProviderCacheRegistryNames,
+		DisableLogColors:               opts.DisableLogColors,
+		OutputFolder:                   opts.OutputFolder,
+		JsonOutputFolder:               opts.JsonOutputFolder,
 	}
 }
 
@@ -524,11 +592,11 @@ func (opts *TerragruntOptions) DataDir() string {
 
 // identifyDefaultWrappedExecutable - return default path used for wrapped executable
 func identifyDefaultWrappedExecutable() string {
-	if util.IsCommandExecutable(TerraformDefaultPath, "-version") {
-		return TerraformDefaultPath
+	if util.IsCommandExecutable(TofuDefaultPath, "-version") {
+		return TofuDefaultPath
 	}
-	// fallback to Tofu if terraform is not available
-	return TofuDefaultPath
+	// fallback to Terraform if tofu is not available
+	return TerraformDefaultPath
 }
 
 // Custom error types

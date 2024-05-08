@@ -2,6 +2,7 @@ package test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -56,7 +57,7 @@ func TestDebugGeneratedInputs(t *testing.T) {
 	mockOptions.WorkingDir = rootPath
 	require.NoError(
 		t,
-		shell.RunTerraformCommand(mockOptions, "apply", "-auto-approve", "-var-file", debugFile),
+		shell.RunTerraformCommand(context.Background(), mockOptions, "apply", "-auto-approve", "-var-file", debugFile),
 	)
 
 	stdout = bytes.Buffer{}
@@ -236,6 +237,7 @@ func TestRenderJSONConfig(t *testing.T) {
 					"name":         "dep",
 					"config_path":  "../dep",
 					"outputs":      nil,
+					"inputs":       nil,
 					"mock_outputs": nil,
 					"enabled":      nil,
 					"mock_outputs_allowed_terraform_commands": nil,
@@ -260,6 +262,7 @@ func TestRenderJSONConfig(t *testing.T) {
 					"disable_signature": false,
 					"disable":           false,
 					"if_exists":         "overwrite_terragrunt",
+					"if_disabled":       "skip",
 					"contents": `provider "aws" {
   region = "us-east-1"
 }
@@ -337,6 +340,7 @@ func TestRenderJSONConfigWithIncludesDependenciesAndLocals(t *testing.T) {
 					"name":         "baz",
 					"config_path":  "./baz",
 					"outputs":      nil,
+					"inputs":       nil,
 					"mock_outputs": nil,
 					"enabled":      nil,
 					"mock_outputs_allowed_terraform_commands": nil,
@@ -361,6 +365,7 @@ func TestRenderJSONConfigWithIncludesDependenciesAndLocals(t *testing.T) {
 					"disable_signature": false,
 					"disable":           false,
 					"if_exists":         "overwrite",
+					"if_disabled":       "skip",
 					"contents":          "# This is just a test",
 				},
 			},

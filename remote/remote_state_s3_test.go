@@ -1,9 +1,11 @@
 package remote
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/sirupsen/logrus"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/gruntwork-io/terragrunt/aws_helper"
@@ -225,6 +227,43 @@ func TestGetAwsSessionConfig(t *testing.T) {
 	}
 }
 
+func TestGetAwsSessionConfigWithAssumeRole(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name   string
+		config map[string]interface{}
+	}{
+		{
+			"all-values",
+			map[string]interface{}{"role_arn": "arn::it", "external_id": "123", "session_name": "foobar"},
+		},
+	}
+
+	for _, testCase := range testCases {
+		// The following is necessary to make sure testCase's values don't
+		// get updated due to concurrency within the scope of t.Run(..) below
+		testCase := testCase
+
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			config := map[string]interface{}{"assume_role": testCase.config}
+			s3ConfigExtended, err := ParseExtendedS3Config(config)
+			require.Nil(t, err, "Unexpected error parsing config for test: %v", err)
+
+			expected := &aws_helper.AwsSessionConfig{
+				RoleArn:     s3ConfigExtended.remoteStateConfigS3.AssumeRole.RoleArn,
+				ExternalID:  s3ConfigExtended.remoteStateConfigS3.AssumeRole.ExternalID,
+				SessionName: s3ConfigExtended.remoteStateConfigS3.AssumeRole.SessionName,
+			}
+
+			actual := s3ConfigExtended.GetAwsSessionConfig()
+			assert.Equal(t, expected, actual)
+		})
+	}
+}
+
 func TestGetTerraformInitArgs(t *testing.T) {
 	t.Parallel()
 
@@ -333,6 +372,22 @@ func TestGetTerraformInitArgs(t *testing.T) {
 			},
 			false,
 		},
+		{
+			"assume-role",
+			map[string]interface{}{
+				"bucket": "foo",
+				"assume_role": map[string]interface{}{
+					"role_arn":     "arn:aws:iam::123:role/role",
+					"external_id":  "123",
+					"session_name": "qwe",
+				},
+			},
+			map[string]interface{}{
+				"bucket":      "foo",
+				"assume_role": "{external_id=\"123\",role_arn=\"arn:aws:iam::123:role/role\",session_name=\"qwe\"}",
+			},
+			true,
+		},
 	}
 
 	for _, testCase := range testCases {
@@ -397,6 +452,80 @@ func TestNegativePublicAccessResponse(t *testing.T) {
 			response, err := validatePublicAccessBlock(testCase.response)
 			assert.NoError(t, err)
 			assert.False(t, response)
+		})
+	}
+}
+
+func TestValidateS3Config(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name           string
+		extendedConfig *ExtendedRemoteStateConfigS3
+		expectedErr    error
+		expectedOutput string
+	}{
+		{
+			name:           "no-region",
+			extendedConfig: &ExtendedRemoteStateConfigS3{},
+			expectedErr:    MissingRequiredS3RemoteStateConfig("region"),
+		},
+		{
+			name: "no-bucket",
+			extendedConfig: &ExtendedRemoteStateConfigS3{
+				remoteStateConfigS3: RemoteStateConfigS3{
+					Region: "us-west-2",
+				},
+			},
+			expectedErr: MissingRequiredS3RemoteStateConfig("bucket"),
+		},
+		{
+			name: "no-key",
+			extendedConfig: &ExtendedRemoteStateConfigS3{
+				remoteStateConfigS3: RemoteStateConfigS3{
+					Region: "us-west-2",
+					Bucket: "state-bucket",
+				},
+			},
+			expectedErr: MissingRequiredS3RemoteStateConfig("key"),
+		},
+		{
+			name: "log-warning-skip-bucket-sse-encryption",
+			extendedConfig: &ExtendedRemoteStateConfigS3{
+				remoteStateConfigS3: RemoteStateConfigS3{
+					Region: "us-west-2",
+					Bucket: "state-bucket",
+					Key:    "terraform.tfstate",
+				},
+			},
+			expectedOutput: "level=warning msg=\"Encryption is not enabled",
+		},
+		{
+			name: "log-debug-skip-bucket-sse-encryption",
+			extendedConfig: &ExtendedRemoteStateConfigS3{
+				SkipBucketSSEncryption: true,
+				remoteStateConfigS3: RemoteStateConfigS3{
+					Region: "us-west-2",
+					Bucket: "state-bucket",
+					Key:    "terraform.tfstate",
+				},
+			},
+			expectedOutput: "level=debug msg=\"Encryption is not enabled",
+		},
+	}
+	for _, testCase := range testCases {
+		testCase := testCase
+
+		t.Run(testCase.name, func(t *testing.T) {
+			buf := &bytes.Buffer{}
+			logger := logrus.New()
+			logger.SetLevel(logrus.DebugLevel)
+			logger.SetOutput(buf)
+			opts := &options.TerragruntOptions{Logger: logrus.NewEntry(logger)}
+			err := validateS3Config(testCase.extendedConfig, opts)
+			if err != nil {
+				assert.ErrorIs(t, err, testCase.expectedErr)
+			}
+			assert.Contains(t, buf.String(), testCase.expectedOutput)
 		})
 	}
 }

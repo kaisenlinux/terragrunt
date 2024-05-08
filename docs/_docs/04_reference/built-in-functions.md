@@ -32,6 +32,8 @@ Terragrunt allows you to use built-in functions anywhere in `terragrunt.hcl`, ju
 
   - [get\_terragrunt\_dir()](#get_terragrunt_dir)
 
+  - [get\_working\_dir()](#get_working_dir)
+
   - [get\_parent\_terragrunt\_dir()](#get_parent_terragrunt_dir)
 
   - [get\_original\_terragrunt\_dir()](#get_original_terragrunt_dir)
@@ -112,11 +114,17 @@ include "root" {
 }
 ```
 
-The function takes an optional `name` parameter that allows you to specify a different filename to search for:
+The function takes an optional `name` parameter that allows you to specify a different path to search for:
 
 ``` hcl
 include "root" {
   path = find_in_parent_folders("some-other-file-name.hcl")
+}
+```
+
+``` hcl
+include "root" {
+  path = find_in_parent_folders("some-folder")
 }
 ```
 
@@ -434,7 +442,9 @@ terraform {
 }
 ```
 
-For the example above, this path will resolve to `/terraform-code/frontend-app/../common.tfvars`, which is exactly what you want.
+## get\_working\_dir
+
+`get_working_dir()` returns the absolute path where Terragrunt runs Terraform commands. This is useful when you need to manage substitutions of vars inside a *.tfvars file located right inside terragrunt's tmp dir.
 
 ## get\_parent\_terragrunt\_dir
 
@@ -773,7 +783,7 @@ inputs = {
 
 `sops_decrypt_file(file_path)` decrypts a yaml, json, ini, env or "raw text" file encrypted with `sops`.
 
-[sops](https://github.com/mozilla/sops) is an editor of encrypted files that supports YAML, JSON, ENV, INI and
+[sops](https://github.com/getsops/sops) is an editor of encrypted files that supports YAML, JSON, ENV, INI and
 BINARY formats and encrypts with AWS KMS, GCP KMS, Azure Key Vault, Hashicorp Vault and PGP.
 
 This allows static secrets to be stored encrypted within your Terragrunt repository.

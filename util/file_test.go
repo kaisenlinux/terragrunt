@@ -77,7 +77,7 @@ func TestGlobCanonicalPath(t *testing.T) {
 	expectedHelper := func(path string) string {
 		basePath, err := filepath.Abs(basePath)
 		assert.NoError(t, err)
-		return filepath.Join(basePath, path)
+		return filepath.ToSlash(filepath.Join(basePath, path))
 	}
 
 	testCases := []struct {
@@ -320,4 +320,21 @@ func TestIncludeInCopy(t *testing.T) {
 				!testCase.copyExpected && errors.Is(err, os.ErrNotExist),
 			"Unexpected copy result for file '%s' (should be copied: '%t') - got error: %s", testCase.path, testCase.copyExpected, err)
 	}
+}
+
+func TestEmptyDir(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		path        string
+		expectEmpty bool
+	}{
+		{t.TempDir(), true},
+		{os.TempDir(), false},
+	}
+	for _, testCase := range testCases {
+		emptyValue, err := IsDirectoryEmpty(testCase.path)
+		assert.NoError(t, err)
+		assert.Equal(t, testCase.expectEmpty, emptyValue, "For path %s", testCase.path)
+	}
+
 }

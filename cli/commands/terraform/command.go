@@ -5,28 +5,30 @@ import (
 	"github.com/gruntwork-io/gruntwork-cli/collections"
 	"github.com/gruntwork-io/terragrunt/options"
 	"github.com/gruntwork-io/terragrunt/pkg/cli"
+	"github.com/gruntwork-io/terragrunt/terraform"
 )
 
 const (
-	CommandName = "terraform"
+	CommandName     = ""
+	CommandHelpName = "*"
 )
 
 var (
-	nativeTerraformCommands = []string{"apply", "console", "destroy", "env", "fmt", "get", "graph", "import", "init", "metadata", "output", "plan", "providers", "push", "refresh", "show", "taint", "test", "version", "validate", "untaint", "workspace", "force-unlock", "state"}
+	nativeTerraformCommands = []string{"apply", "console", "destroy", "env", "fmt", "get", "graph", "import", "init", "login", "logout", "metadata", "output", "plan", "providers", "push", "refresh", "show", "taint", "test", "version", "validate", "untaint", "workspace", "force-unlock", "state"}
 )
 
 func NewCommand(opts *options.TerragruntOptions) *cli.Command {
 	return &cli.Command{
 		Name:     CommandName,
-		HelpName: "*",
+		HelpName: CommandHelpName,
 		Usage:    "Terragrunt forwards all other commands directly to Terraform",
 		Action:   action(opts),
 	}
 }
 
-func action(opts *options.TerragruntOptions) func(ctx *cli.Context) error {
+func action(opts *options.TerragruntOptions) cli.ActionFunc {
 	return func(ctx *cli.Context) error {
-		if opts.TerraformCommand == CommandNameDestroy {
+		if opts.TerraformCommand == terraform.CommandNameDestroy {
 			opts.CheckDependentModules = true
 		}
 
@@ -34,6 +36,6 @@ func action(opts *options.TerragruntOptions) func(ctx *cli.Context) error {
 			return errors.WithStackTrace(WrongTerraformCommand(opts.TerraformCommand))
 		}
 
-		return Run(opts.OptionsFromContext(ctx))
+		return Run(ctx.Context, opts.OptionsFromContext(ctx))
 	}
 }

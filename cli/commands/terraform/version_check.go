@@ -1,6 +1,7 @@
 package terraform
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"regexp"
@@ -18,11 +19,12 @@ import (
 const DefaultTerraformVersionConstraint = ">= v0.12.0"
 
 // TerraformVersionRegex verifies that terraform --version output is in one of the following formats:
+// - OpenTofu v1.6.0-dev
 // - Terraform v0.9.5-dev (cad024a5fe131a546936674ef85445215bbc4226+CHANGES)
 // - Terraform v0.13.0-beta2
 // - Terraform v0.12.27
 // We only make sure the "v#.#.#" part is present in the output.
-var TerraformVersionRegex = regexp.MustCompile(`^(.*?)\s(v?\d+\.\d+\.\d+).*`)
+var TerraformVersionRegex = regexp.MustCompile(`^(\S+)\s(v?\d+\.\d+\.\d+)`)
 
 const versionParts = 3
 
@@ -31,12 +33,13 @@ const versionParts = 3
 // - TerraformPath
 // - TerraformVersion
 // TODO: Look into a way to refactor this function to avoid the side effect.
-func checkVersionConstraints(terragruntOptions *options.TerragruntOptions) error {
+func checkVersionConstraints(ctx context.Context, terragruntOptions *options.TerragruntOptions) error {
+	configContext := config.NewParsingContext(context.Background(), terragruntOptions).WithDecodeList(config.TerragruntVersionConstraints)
+
 	partialTerragruntConfig, err := config.PartialParseConfigFile(
+		configContext,
 		terragruntOptions.TerragruntConfigPath,
-		terragruntOptions,
 		nil,
-		[]config.PartialDecodeSectionType{config.TerragruntVersionConstraints},
 	)
 	if err != nil {
 		return err
@@ -47,7 +50,7 @@ func checkVersionConstraints(terragruntOptions *options.TerragruntOptions) error
 	if terragruntOptions.TerraformPath == options.DefaultWrappedPath && partialTerragruntConfig.TerraformBinary != "" {
 		terragruntOptions.TerraformPath = partialTerragruntConfig.TerraformBinary
 	}
-	if err := PopulateTerraformVersion(terragruntOptions); err != nil {
+	if err := PopulateTerraformVersion(ctx, terragruntOptions); err != nil {
 		return err
 	}
 
@@ -68,7 +71,7 @@ func checkVersionConstraints(terragruntOptions *options.TerragruntOptions) error
 }
 
 // Populate the currently installed version of Terraform into the given terragruntOptions
-func PopulateTerraformVersion(terragruntOptions *options.TerragruntOptions) error {
+func PopulateTerraformVersion(ctx context.Context, terragruntOptions *options.TerragruntOptions) error {
 	// Discard all log output to make sure we don't pollute stdout or stderr with this extra call to '--version'
 	terragruntOptionsCopy := terragruntOptions.Clone(terragruntOptions.TerragruntConfigPath)
 	terragruntOptionsCopy.Writer = io.Discard
@@ -84,7 +87,7 @@ func PopulateTerraformVersion(terragruntOptions *options.TerragruntOptions) erro
 		}
 	}
 
-	output, err := shell.RunTerraformCommandWithOutput(terragruntOptionsCopy, "--version")
+	output, err := shell.RunTerraformCommandWithOutput(ctx, terragruntOptionsCopy, "--version")
 	if err != nil {
 		return err
 	}

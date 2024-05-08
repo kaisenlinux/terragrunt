@@ -21,6 +21,7 @@ const (
 	testFixtureLocalDownloadPath          = "fixture-download/local"
 	testFixtureCustomLockFile             = "fixture-download/custom-lock-file"
 	testFixtureRemoteDownloadPath         = "fixture-download/remote"
+	testFixtureInvalidRemoteDownloadPath  = "fixture-download/remote-invalid"
 	testFixtureOverrideDonwloadPath       = "fixture-download/override"
 	testFixtureLocalRelativeDownloadPath  = "fixture-download/local-relative"
 	testFixtureRemoteRelativeDownloadPath = "fixture-download/remote-relative"
@@ -144,6 +145,24 @@ func TestRemoteDownload(t *testing.T) {
 	runTerragrunt(t, fmt.Sprintf("terragrunt apply -auto-approve --terragrunt-non-interactive --terragrunt-working-dir %s", testFixtureRemoteDownloadPath))
 }
 
+func TestInvalidRemoteDownload(t *testing.T) {
+	t.Parallel()
+
+	cleanupTerraformFolder(t, testFixtureInvalidRemoteDownloadPath)
+	applyStdout := bytes.Buffer{}
+	applyStderr := bytes.Buffer{}
+
+	err := runTerragruntCommand(t, fmt.Sprintf("terragrunt apply -auto-approve --terragrunt-non-interactive --terragrunt-working-dir %s", testFixtureInvalidRemoteDownloadPath), &applyStdout, &applyStderr)
+
+	logBufferContentsLineByLine(t, applyStdout, "apply stdout")
+	logBufferContentsLineByLine(t, applyStderr, "apply stderr")
+
+	assert.Error(t, err)
+	errMessage := "downloading source url"
+	assert.Containsf(t, err.Error(), errMessage, "expected error containing %q, got %s", errMessage, err)
+
+}
+
 func TestRemoteDownloadWithRelativePath(t *testing.T) {
 	t.Parallel()
 
@@ -205,14 +224,14 @@ func TestCustomLockFile(t *testing.T) {
 	t.Parallel()
 
 	path := fmt.Sprintf("%s-%s", testFixtureCustomLockFile, wrappedBinary())
+	tmpEnvPath := copyEnvironment(t, filepath.Dir(testFixtureCustomLockFile))
+	rootPath := util.JoinPath(tmpEnvPath, path)
 
-	cleanupTerraformFolder(t, path)
-
-	runTerragrunt(t, fmt.Sprintf("terragrunt apply -auto-approve --terragrunt-non-interactive --terragrunt-working-dir %s", path))
+	runTerragrunt(t, fmt.Sprintf("terragrunt apply -auto-approve --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir %s", rootPath))
 
 	source := "../custom-lock-file-module"
-	downloadDir := util.JoinPath(path, TERRAGRUNT_CACHE)
-	result, err := tfsource.NewSource(source, downloadDir, path, util.CreateLogEntry("", util.GetDefaultLogLevel()))
+	downloadDir := util.JoinPath(rootPath, TERRAGRUNT_CACHE)
+	result, err := tfsource.NewSource(source, downloadDir, rootPath, util.CreateLogEntry("", util.GetDefaultLogLevel()))
 	require.NoError(t, err)
 
 	lockFilePath := util.JoinPath(result.WorkingDir, util.TerraformLockFile)
@@ -265,7 +284,7 @@ func TestExcludeDirs(t *testing.T) {
 		}
 
 		// Apply modules according to test cases
-		err := runTerragruntCommand(t, fmt.Sprintf("terragrunt apply-all --terragrunt-non-interactive --terragrunt-working-dir %s %s", testCase.workingDir, testCase.excludeArgs), &applyAllStdout, &applyAllStderr)
+		err := runTerragruntCommand(t, fmt.Sprintf("terragrunt apply-all --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir %s %s", testCase.workingDir, testCase.excludeArgs), &applyAllStdout, &applyAllStderr)
 
 		logBufferContentsLineByLine(t, applyAllStdout, "apply-all stdout")
 		logBufferContentsLineByLine(t, applyAllStderr, "apply-all stderr")
@@ -279,7 +298,7 @@ func TestExcludeDirs(t *testing.T) {
 			showStdout := bytes.Buffer{}
 			showStderr := bytes.Buffer{}
 
-			err = runTerragruntCommand(t, fmt.Sprintf("terragrunt show --terragrunt-non-interactive --terragrunt-working-dir %s", modulePath), &showStdout, &showStderr)
+			err = runTerragruntCommand(t, fmt.Sprintf("terragrunt show --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir %s", modulePath), &showStdout, &showStderr)
 			logBufferContentsLineByLine(t, showStdout, fmt.Sprintf("show stdout for %s", modulePath))
 			logBufferContentsLineByLine(t, showStderr, fmt.Sprintf("show stderr for %s", modulePath))
 
@@ -331,7 +350,7 @@ func TestIncludeDirs(t *testing.T) {
 		}
 
 		// Apply modules according to test cases
-		err := runTerragruntCommand(t, fmt.Sprintf("terragrunt apply-all --terragrunt-non-interactive --terragrunt-working-dir %s %s", testCase.workingDir, testCase.includeArgs), &applyAllStdout, &applyAllStderr)
+		err := runTerragruntCommand(t, fmt.Sprintf("terragrunt apply-all --terragrunt-non-interactive  --terragrunt-log-level debug --terragrunt-working-dir %s %s", testCase.workingDir, testCase.includeArgs), &applyAllStdout, &applyAllStderr)
 
 		logBufferContentsLineByLine(t, applyAllStdout, "apply-all stdout")
 		logBufferContentsLineByLine(t, applyAllStderr, "apply-all stderr")
@@ -345,7 +364,7 @@ func TestIncludeDirs(t *testing.T) {
 			showStdout := bytes.Buffer{}
 			showStderr := bytes.Buffer{}
 
-			err = runTerragruntCommand(t, fmt.Sprintf("terragrunt show --terragrunt-non-interactive --terragrunt-working-dir %s", modulePath), &showStdout, &showStderr)
+			err = runTerragruntCommand(t, fmt.Sprintf("terragrunt show --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir %s", modulePath), &showStdout, &showStderr)
 			logBufferContentsLineByLine(t, showStdout, fmt.Sprintf("show stdout for %s", modulePath))
 			logBufferContentsLineByLine(t, showStderr, fmt.Sprintf("show stderr for %s", modulePath))
 
