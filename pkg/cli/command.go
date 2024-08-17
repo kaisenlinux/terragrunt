@@ -218,7 +218,7 @@ func (cmd *Command) flagSetParse(flagSet *libflag.FlagSet, args []string) ([]str
 		var notFoundMatch bool
 		for i, arg := range args {
 			// `--var=input=from_env` trims to `var`
-			trimmed := strings.SplitN(strings.Trim(arg, "-"), "=", 2)[0]
+			trimmed := strings.SplitN(strings.Trim(arg, "-"), "=", 2)[0] //nolint:mnd
 			if trimmed == undefArg {
 				undefArgs = append(undefArgs, arg)
 				notFoundMatch = true
@@ -237,4 +237,14 @@ func (cmd *Command) flagSetParse(flagSet *libflag.FlagSet, args []string) ([]str
 
 	undefArgs = append(undefArgs, flagSet.Args()...)
 	return undefArgs, nil
+}
+
+func (cmd Command) WrapAction(fn func(ctx *Context, action ActionFunc) error) *Command {
+	action := cmd.Action
+	cmd.Action = func(ctx *Context) error {
+		return fn(ctx, action)
+	}
+	cmd.Subcommands = cmd.Subcommands.WrapAction(fn)
+
+	return &cmd
 }

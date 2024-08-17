@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"errors"
+
 	"github.com/gruntwork-io/terragrunt/options"
 	"github.com/gruntwork-io/terragrunt/pkg/cli"
 	"github.com/gruntwork-io/terragrunt/shell"
@@ -22,10 +24,12 @@ const (
 	TerragruntIAMRoleFlagName                        = "terragrunt-iam-role"
 	TerragruntIAMAssumeRoleDurationFlagName          = "terragrunt-iam-assume-role-duration"
 	TerragruntIAMAssumeRoleSessionNameFlagName       = "terragrunt-iam-assume-role-session-name"
+	TerragruntIAMWebIdentityTokenFlagName            = "terragrunt-iam-web-identity-token"
 	TerragruntIgnoreDependencyErrorsFlagName         = "terragrunt-ignore-dependency-errors"
 	TerragruntIgnoreDependencyOrderFlagName          = "terragrunt-ignore-dependency-order"
 	TerragruntIgnoreExternalDependenciesFlagName     = "terragrunt-ignore-external-dependencies"
 	TerragruntIncludeExternalDependenciesFlagName    = "terragrunt-include-external-dependencies"
+	TerragruntExcludesFile                           = "terragrunt-excludes-file"
 	TerragruntExcludeDirFlagName                     = "terragrunt-exclude-dir"
 	TerragruntIncludeDirFlagName                     = "terragrunt-include-dir"
 	TerragruntStrictIncludeFlagName                  = "terragrunt-strict-include"
@@ -42,6 +46,9 @@ const (
 	TerragruntFailOnStateBucketCreationFlagName      = "terragrunt-fail-on-state-bucket-creation"
 	TerragruntDisableBucketUpdateFlagName            = "terragrunt-disable-bucket-update"
 	TerragruntDisableCommandValidationFlagName       = "terragrunt-disable-command-validation"
+
+	TerragruntAuthProviderCmdFlagName   = "terragrunt-auth-provider-cmd"
+	TerragruntAuthProviderCmdEnvVarName = "TERRAGRUNT_AUTH_PROVIDER_CMD"
 
 	TerragruntOutDirFlagEnvVarName = "TERRAGRUNT_OUT_DIR"
 	TerragruntOutDirFlagName       = "terragrunt-out-dir"
@@ -158,6 +165,12 @@ func NewGlobalFlags(opts *options.TerragruntOptions) cli.Flags {
 			EnvVar:      "TERRAGRUNT_IAM_ASSUME_ROLE_SESSION_NAME",
 			Usage:       "Name for the IAM Assummed Role session. Can also be set via TERRAGRUNT_IAM_ASSUME_ROLE_SESSION_NAME environment variable.",
 		},
+		&cli.GenericFlag[string]{
+			Name:        TerragruntIAMWebIdentityTokenFlagName,
+			Destination: &opts.IAMRoleOptions.WebIdentityToken,
+			EnvVar:      "TERRAGRUNT_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN",
+			Usage:       "For AssumeRoleWithWebIdentity, the WebIdentity token. Can also be set via TERRAGRUNT_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN environment variable",
+		},
 		&cli.BoolFlag{
 			Name:        TerragruntIgnoreDependencyErrorsFlagName,
 			Destination: &opts.IgnoreDependencyErrors,
@@ -184,6 +197,12 @@ func NewGlobalFlags(opts *options.TerragruntOptions) cli.Flags {
 			Destination: &opts.Parallelism,
 			EnvVar:      "TERRAGRUNT_PARALLELISM",
 			Usage:       "*-all commands parallelism set to at most N modules",
+		},
+		&cli.GenericFlag[string]{
+			Name:        TerragruntExcludesFile,
+			Destination: &opts.ExcludesFile,
+			EnvVar:      "TERRAGRUNT_EXCLUDES_FILE",
+			Usage:       "Path to a file with a list of directories that need to be excluded when running *-all commands.",
 		},
 		&cli.SliceFlag[string]{
 			Name:        TerragruntExcludeDirFlagName,
@@ -309,6 +328,12 @@ func NewGlobalFlags(opts *options.TerragruntOptions) cli.Flags {
 			EnvVar:      TerragruntProviderCacheRegistryNamesEnvVarName,
 			Usage:       "The list of remote registries to cached by Terragrunt Provider Cache server. By default, 'registry.terraform.io', 'registry.opentofu.org'.",
 		},
+		&cli.GenericFlag[string]{
+			Name:        TerragruntAuthProviderCmdFlagName,
+			Destination: &opts.AuthProviderCmd,
+			EnvVar:      TerragruntAuthProviderCmdEnvVarName,
+			Usage:       "The command and arguments that can be used to fetch authentication configurations.",
+		},
 	}
 
 	flags.Sort()
@@ -339,7 +364,8 @@ func NewHelpFlag(opts *options.TerragruntOptions) cli.Flag {
 				err := cli.ShowCommandHelp(ctx, cmdName)
 
 				// If the command name is not found, it is most likely a terraform command, show Terraform help.
-				if _, ok := err.(cli.InvalidCommandNameError); ok {
+				var invalidCommandNameError cli.InvalidCommandNameError
+				if ok := errors.As(err, &invalidCommandNameError); ok {
 					terraformHelpCmd := append([]string{cmdName, "-help"}, ctx.Args().Tail()...)
 					return shell.RunTerraformCommand(ctx, opts, terraformHelpCmd...)
 				}

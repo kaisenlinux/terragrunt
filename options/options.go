@@ -2,6 +2,7 @@ package options
 
 import (
 	"context"
+	goErrors "errors"
 	"fmt"
 	"io"
 	"math"
@@ -37,6 +38,8 @@ const (
 	DefaultIAMAssumeRoleDuration = 3600
 
 	minCommandLength = 2
+
+	defaultExcludesFile = ".terragrunt-excludes"
 )
 
 var (
@@ -192,11 +195,18 @@ type TerragruntOptions struct {
 	// RetryableErrors is an array of regular expressions with RE2 syntax (https://github.com/google/re2/wiki/Syntax) that qualify for retrying
 	RetryableErrors []string
 
+	// Path to a file with a list of directories that need  to be excluded when running *-all commands.
+	ExcludesFile string
+
 	// Unix-style glob of directories to exclude when running *-all commands
 	ExcludeDirs []string
 
 	// Unix-style glob of directories to include when running *-all commands
 	IncludeDirs []string
+
+	// If set to true, exclude all directories by default when running *-all commands
+	// Is set automatically if IncludeDirs is set
+	ExcludeByDefault bool
 
 	// If set to true, do not include dependencies when processing IncludeDirs (unless they are in the included dirs)
 	StrictInclude bool
@@ -297,12 +307,42 @@ type TerragruntOptions struct {
 
 	// Folder to store JSON representation of output files.
 	JsonOutputFolder string
+
+	// The command and arguments that can be used to fetch authentication configurations.
+	// Terragrunt invokes this command before running tofu/terraform operations for each working directory.
+	AuthProviderCmd string
+
+	// Allows to skip the output of all dependencies. Intended for use with `hclvalidate` command.
+	SkipOutput bool
+
+	// Options to use engine for running IaC operations.
+	Engine *EngineOptions
+}
+
+// TerragruntOptionsFunc is a functional option type used to pass options in certain integration tests
+type TerragruntOptionsFunc func(*TerragruntOptions)
+
+// WithRoleARN adds the provided role ARN to IamRoleOptions
+func WithIAMRoleARN(arn string) TerragruntOptionsFunc {
+	return func(t *TerragruntOptions) {
+		t.IAMRoleOptions.RoleARN = arn
+	}
+}
+
+// WithIAMWebIdentityToken adds the provided WebIdentity token to IamRoleOptions
+func WithIAMWebIdentityToken(token string) TerragruntOptionsFunc {
+	return func(t *TerragruntOptions) {
+		t.IAMRoleOptions.WebIdentityToken = token
+	}
 }
 
 // IAMRoleOptions represents options that are used by Terragrunt to assume an IAM role.
 type IAMRoleOptions struct {
 	// The ARN of an IAM Role to assume. Used when accessing AWS, both internally and through terraform.
 	RoleARN string
+
+	// The Web identity token. Used when RoleArn is also set to use AssumeRoleWithWebIdentity instead of AssumeRole.
+	WebIdentityToken string
 
 	// Duration of the STS Session when assuming the role.
 	AssumeRoleDuration int64
@@ -326,6 +366,10 @@ func MergeIAMRoleOptions(target IAMRoleOptions, source IAMRoleOptions) IAMRoleOp
 		out.AssumeRoleSessionName = source.AssumeRoleSessionName
 	}
 
+	if source.WebIdentityToken != "" {
+		out.WebIdentityToken = source.WebIdentityToken
+	}
+
 	return out
 }
 
@@ -333,6 +377,7 @@ func MergeIAMRoleOptions(target IAMRoleOptions, source IAMRoleOptions) IAMRoleOp
 func NewTerragruntOptions() *TerragruntOptions {
 	return &TerragruntOptions{
 		TerraformPath:                  DefaultWrappedPath,
+		ExcludesFile:                   defaultExcludesFile,
 		OriginalTerraformCommand:       "",
 		TerraformCommand:               "",
 		AutoInit:                       true,
@@ -373,7 +418,7 @@ func NewTerragruntOptions() *TerragruntOptions {
 		TerraformLogsToJson:            false,
 		JsonDisableDependentModules:    false,
 		RunTerragrunt: func(ctx context.Context, opts *TerragruntOptions) error {
-			return errors.WithStackTrace(RunTerragruntCommandNotSet)
+			return errors.WithStackTrace(ErrRunTerragruntCommandNotSet)
 		},
 		ProviderCacheRegistryNames: defaultProviderCacheRegistryNames,
 		OutputFolder:               "",
@@ -413,7 +458,7 @@ func GetDefaultIAMAssumeRoleSessionName() string {
 }
 
 // Create a new TerragruntOptions object with reasonable defaults for test usage
-func NewTerragruntOptionsForTest(terragruntConfigPath string) (*TerragruntOptions, error) {
+func NewTerragruntOptionsForTest(terragruntConfigPath string, options ...TerragruntOptionsFunc) (*TerragruntOptions, error) {
 	opts, err := NewTerragruntOptionsWithConfigPath(terragruntConfigPath)
 	if err != nil {
 		logger := util.CreateLogEntry("", util.GetDefaultLogLevel())
@@ -424,6 +469,10 @@ func NewTerragruntOptionsForTest(terragruntConfigPath string) (*TerragruntOption
 	opts.NonInteractive = true
 	opts.Logger = util.CreateLogEntry("", logrus.DebugLevel)
 	opts.LogLevel = logrus.DebugLevel
+
+	for _, opt := range options {
+		opt(opts)
+	}
 
 	return opts, nil
 }
@@ -482,8 +531,10 @@ func (opts *TerragruntOptions) Clone(terragruntConfigPath string) *TerragruntOpt
 		RetryMaxAttempts:               opts.RetryMaxAttempts,
 		RetrySleepIntervalSec:          opts.RetrySleepIntervalSec,
 		RetryableErrors:                util.CloneStringList(opts.RetryableErrors),
+		ExcludesFile:                   opts.ExcludesFile,
 		ExcludeDirs:                    opts.ExcludeDirs,
 		IncludeDirs:                    opts.IncludeDirs,
+		ExcludeByDefault:               opts.ExcludeByDefault,
 		ModulesThatInclude:             opts.ModulesThatInclude,
 		Parallelism:                    opts.Parallelism,
 		StrictInclude:                  opts.StrictInclude,
@@ -513,6 +564,22 @@ func (opts *TerragruntOptions) Clone(terragruntConfigPath string) *TerragruntOpt
 		DisableLogColors:               opts.DisableLogColors,
 		OutputFolder:                   opts.OutputFolder,
 		JsonOutputFolder:               opts.JsonOutputFolder,
+		AuthProviderCmd:                opts.AuthProviderCmd,
+		SkipOutput:                     opts.SkipOutput,
+		Engine:                         cloneEngineOptions(opts.Engine),
+	}
+}
+
+// cloneEngineOptions creates a deep copy of the given EngineOptions
+func cloneEngineOptions(opts *EngineOptions) *EngineOptions {
+	if opts == nil {
+		return nil
+	}
+	return &EngineOptions{
+		Source:  opts.Source,
+		Version: opts.Version,
+		Type:    opts.Type,
+		Meta:    opts.Meta,
 	}
 }
 
@@ -599,6 +666,14 @@ func identifyDefaultWrappedExecutable() string {
 	return TerraformDefaultPath
 }
 
+// EngineOptions Options for the Terragrunt engine
+type EngineOptions struct {
+	Source  string
+	Version string
+	Type    string
+	Meta    map[string]interface{}
+}
+
 // Custom error types
 
-var RunTerragruntCommandNotSet = fmt.Errorf("The RunTerragrunt option has not been set on this TerragruntOptions object")
+var ErrRunTerragruntCommandNotSet = goErrors.New("the RunTerragrunt option has not been set on this TerragruntOptions object")

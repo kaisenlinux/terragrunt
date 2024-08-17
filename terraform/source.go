@@ -2,6 +2,7 @@ package terraform
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"os"
@@ -84,7 +85,7 @@ func (terraformSource Source) EncodeSourceVersion() (string, error) {
 		})
 
 		if err == nil {
-			hash := fmt.Sprintf("%x", sourceHash.Sum(nil))
+			hash := hex.EncodeToString(sourceHash.Sum(nil))
 
 			return hash, nil
 		}
@@ -111,7 +112,8 @@ func (terraformSource Source) WriteVersionFile() error {
 		}
 	}
 
-	return errors.WithStackTrace(os.WriteFile(terraformSource.VersionFile, []byte(version), 0640))
+	const ownerReadWriteGroupReadPerms = 0640
+	return errors.WithStackTrace(os.WriteFile(terraformSource.VersionFile, []byte(version), ownerReadWriteGroupReadPerms))
 }
 
 // Take the given source path and create a Source struct from it, including the folder where the source should
@@ -191,8 +193,10 @@ func NewSource(source string, downloadDir string, workingDir string, logger *log
 // Convert the given source into a URL struct. This method should be able to handle all source URLs that the terraform
 // init command can handle, parsing local file paths, Git paths, and HTTP URLs correctly.
 func ToSourceUrl(source string, workingDir string) (*url.URL, error) {
-	// we need to remove the http(s) scheme to allow `getter.Detect` to add the source type
-	source = httpSchemeRegexp.ReplaceAllString(source, "")
+	source, err := normalizeSourceURL(source, workingDir)
+	if err != nil {
+		return nil, err
+	}
 
 	// The go-getter library is what Terraform's init command uses to download source URLs. Use that library to
 	// parse the URL.
@@ -202,6 +206,33 @@ func ToSourceUrl(source string, workingDir string) (*url.URL, error) {
 	}
 
 	return parseSourceUrl(rawSourceUrlWithGetter)
+}
+
+// We have to remove the http(s) scheme from the source URL to allow `getter.Detect` to add the source type, but only if the `getter` has a detector for that host.
+func normalizeSourceURL(source string, workingDir string) (string, error) {
+	newSource := httpSchemeRegexp.ReplaceAllString(source, "")
+
+	// We can't use `the getter.Detectors` global variable because we need to exclude from checking:
+	// * `getter.FileDetector` is not a host detector
+	// * `getter.S3Detector` we should not remove `https` from s3 link since this is a public link, and if we remove `https` scheme, `getter.S3Detector` adds `s3::https` which in turn requires credentials.
+	detectors := []getter.Detector{
+		new(getter.GitHubDetector),
+		new(getter.GitLabDetector),
+		new(getter.GitDetector),
+		new(getter.BitBucketDetector),
+		new(getter.GCSDetector),
+	}
+
+	for _, detector := range detectors {
+		_, ok, err := detector.Detect(newSource, workingDir)
+		if err != nil {
+			return source, errors.WithStackTrace(err)
+		}
+		if ok {
+			return newSource, nil
+		}
+	}
+	return source, nil
 }
 
 // Parse the given source URL into a URL struct. This method can handle source URLs that include go-getter's "forced
@@ -241,7 +272,7 @@ func IsLocalSource(sourceUrl *url.URL) bool {
 // path is everything after the double slash. If there is no double-slash in the URL, the root repo is the entire
 // sourceUrl and the path is an empty string.
 func SplitSourceUrl(sourceUrl *url.URL, logger *logrus.Entry) (*url.URL, string, error) {
-	pathSplitOnDoubleSlash := strings.SplitN(sourceUrl.Path, "//", 2)
+	pathSplitOnDoubleSlash := strings.SplitN(sourceUrl.Path, "//", 2) //nolint:mnd
 
 	if len(pathSplitOnDoubleSlash) > 1 {
 		sourceUrlModifiedPath, err := parseSourceUrl(sourceUrl.String())

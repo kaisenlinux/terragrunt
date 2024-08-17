@@ -1,4 +1,4 @@
-package cliconfig
+package cliconfig_test
 
 import (
 	"fmt"
@@ -6,38 +6,44 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/gruntwork-io/terragrunt/terraform/cliconfig"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestConfig(t *testing.T) {
 	t.Parallel()
 
+	var (
+		include = []string{"registry.terraform.io/*/*"}
+		exclude = []string{"registry.opentofu.org/*/*"}
+	)
+
 	tempCacheDir, err := os.MkdirTemp("", "*")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	testCases := []struct {
-		filesystemMethod *ProviderInstallationFilesystemMirror
-		directMethod     *ProviderInstallationDirect
-		hosts            map[string]map[string]string
-		config           *Config
-		expectedHCL      string
+		providerInstallationMethods []cliconfig.ProviderInstallationMethod
+		hosts                       []cliconfig.ConfigHost
+		config                      cliconfig.Config
+		expectedHCL                 string
 	}{
 		{
-			filesystemMethod: NewProviderInstallationFilesystemMirror(tempCacheDir, []string{"registry.terraform.io/*/*", "registry.opentofu.org/*/*"}, nil),
-			directMethod:     NewProviderInstallationDirect([]string{"registry.terraform.io/*/*", "registry.opentofu.org/*/*"}, nil),
-			hosts: map[string]map[string]string{
-				"registry.terraform.io": map[string]string{
-					"providers.v1": "http://localhost:5758/v1/providers/registry.terraform.io/",
-				},
+			providerInstallationMethods: []cliconfig.ProviderInstallationMethod{
+				cliconfig.NewProviderInstallationFilesystemMirror(tempCacheDir, include, exclude),
+				cliconfig.NewProviderInstallationNetworkMirror("https://network-mirror.io/providers/", include, exclude),
+				cliconfig.NewProviderInstallationDirect(include, exclude),
 			},
-			config: &Config{
-				rawHCL: []byte(`
-disable_checkpoint = true
-plugin_cache_dir   = "path/to/plugin/cache/dir"`),
+			hosts: []cliconfig.ConfigHost{
+				{"registry.terraform.io", map[string]string{"providers.v1": "http://localhost:5758/v1/providers/registry.terraform.io/"}},
 			},
-			expectedHCL: `
-disable_checkpoint = true
-plugin_cache_dir = ""
+			config: cliconfig.Config{
+				DisableCheckpoint: true,
+				PluginCacheDir:    "path/to/plugin/cache/dir1",
+			},
+			expectedHCL: `disable_checkpoint           = true
+disable_checkpoint_signature = false
+plugin_cache_dir             = "path/to/plugin/cache/dir1"
 
 host "registry.terraform.io" {
   services = {
@@ -47,27 +53,34 @@ host "registry.terraform.io" {
 
 provider_installation {
 
-  filesystem_mirror {
+   "filesystem_mirror" {
     path    = "` + tempCacheDir + `"
-    include = ["registry.terraform.io/*/*", "registry.opentofu.org/*/*"]
+    include = ["registry.terraform.io/*/*"]
+    exclude = ["registry.opentofu.org/*/*"]
   }
-
-  direct {
-    include = ["registry.terraform.io/*/*", "registry.opentofu.org/*/*"]
+   "network_mirror" {
+    url     = "https://network-mirror.io/providers/"
+    include = ["registry.terraform.io/*/*"]
+    exclude = ["registry.opentofu.org/*/*"]
+  }
+   "direct" {
+    include = ["registry.terraform.io/*/*"]
+    exclude = ["registry.opentofu.org/*/*"]
   }
 }
 `,
 		},
 		{
-			config: &Config{
-				rawHCL: []byte(`
-disable_checkpoint = true
-plugin_cache_dir   = "path/to/plugin/cache/dir"`),
-				PluginCacheDir: tempCacheDir,
+			config: cliconfig.Config{
+				DisableCheckpoint: false,
+				PluginCacheDir:    tempCacheDir,
 			},
-			expectedHCL: `
-disable_checkpoint = true
-plugin_cache_dir = "` + tempCacheDir + `"
+			expectedHCL: `disable_checkpoint           = false
+disable_checkpoint_signature = false
+plugin_cache_dir             = "` + tempCacheDir + `"
+
+provider_installation {
+}
 `,
 		},
 	}
@@ -78,20 +91,19 @@ plugin_cache_dir = "` + tempCacheDir + `"
 		t.Run(fmt.Sprintf("testCase-%d", i), func(t *testing.T) {
 			t.Parallel()
 
-			tempDir, err := os.MkdirTemp("", "*")
-			assert.NoError(t, err)
+			tempDir := t.TempDir()
 			configFile := filepath.Join(tempDir, ".terraformrc")
 
-			for host, service := range testCase.hosts {
-				testCase.config.AddHost(host, service)
+			for _, host := range testCase.hosts {
+				testCase.config.AddHost(host.Name, host.Services)
 			}
-			testCase.config.SetProviderInstallation(testCase.filesystemMethod, testCase.directMethod)
+			testCase.config.AddProviderInstallationMethods(testCase.providerInstallationMethods...)
 
 			err = testCase.config.Save(configFile)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			hclBytes, err := os.ReadFile(configFile)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			assert.Equal(t, testCase.expectedHCL, string(hclBytes))
 		})

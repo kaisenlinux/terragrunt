@@ -1,12 +1,15 @@
 package main
 
 import (
+	goErrors "errors"
 	"os"
+	"strings"
 
 	"github.com/gruntwork-io/go-commons/errors"
 	"github.com/gruntwork-io/terragrunt/cli"
 	"github.com/gruntwork-io/terragrunt/shell"
 	"github.com/gruntwork-io/terragrunt/util"
+	"github.com/hashicorp/go-multierror"
 )
 
 // The main entrypoint for Terragrunt
@@ -24,11 +27,11 @@ func checkForErrorsAndExit(err error) {
 	if err == nil {
 		os.Exit(0)
 	} else {
-		util.GlobalFallbackLogEntry.Debugf(errors.PrintErrorWithStackTrace(err))
+		util.GlobalFallbackLogEntry.Debugf(printErrorWithStackTrace(err))
 		util.GlobalFallbackLogEntry.Errorf(err.Error())
 
 		// exit with the underlying error code
-		exitCode, exitCodeErr := shell.GetExitCode(err)
+		exitCode, exitCodeErr := util.GetExitCode(err)
 		if exitCodeErr != nil {
 			exitCode = 1
 			util.GlobalFallbackLogEntry.Errorf("Unable to determine underlying exit code, so Terragrunt will exit with error code 1")
@@ -38,5 +41,17 @@ func checkForErrorsAndExit(err error) {
 		}
 		os.Exit(exitCode)
 	}
+}
 
+func printErrorWithStackTrace(err error) string {
+	var multierror *multierror.Error
+	// if err, ok := err.(*multierror.Error); ok {
+	if goErrors.As(err, &multierror) {
+		var errsStr []string
+		for _, err := range multierror.Errors {
+			errsStr = append(errsStr, errors.PrintErrorWithStackTrace(err))
+		}
+		return strings.Join(errsStr, "\n")
+	}
+	return errors.PrintErrorWithStackTrace(err)
 }

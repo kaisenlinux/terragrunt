@@ -27,6 +27,7 @@ func TerragruntConfigAsCty(config *TerragruntConfig) (cty.Value, error) {
 	output[MetadataIamRole] = gostringToCty(config.IamRole)
 	output[MetadataSkip] = goboolToCty(config.Skip)
 	output[MetadataIamAssumeRoleSessionName] = gostringToCty(config.IamAssumeRoleSessionName)
+	output[MetadataIamWebIdentityToken] = gostringToCty(config.IamWebIdentityToken)
 
 	catalogConfigCty, err := catalogConfigAsCty(config.Catalog)
 	if err != nil {
@@ -34,6 +35,14 @@ func TerragruntConfigAsCty(config *TerragruntConfig) (cty.Value, error) {
 	}
 	if catalogConfigCty != cty.NilVal {
 		output[MetadataCatalog] = catalogConfigCty
+	}
+
+	engineConfigCty, err := engineConfigAsCty(config.Engine)
+	if err != nil {
+		return cty.NilVal, err
+	}
+	if engineConfigCty != cty.NilVal {
+		output[MetadataEngine] = engineConfigCty
 	}
 
 	terraformConfigCty, err := terraformConfigAsCty(config.Terraform)
@@ -44,7 +53,7 @@ func TerragruntConfigAsCty(config *TerragruntConfig) (cty.Value, error) {
 		output[MetadataTerraform] = terraformConfigCty
 	}
 
-	remoteStateCty, err := remoteStateAsCty(config.RemoteState)
+	remoteStateCty, err := RemoteStateAsCty(config.RemoteState)
 	if err != nil {
 		return cty.NilVal, err
 	}
@@ -211,7 +220,7 @@ func TerragruntConfigAsCtyWithMetadata(config *TerragruntConfig) (cty.Value, err
 	}
 
 	// Remote state
-	remoteStateCty, err := remoteStateAsCty(config.RemoteState)
+	remoteStateCty, err := RemoteStateAsCty(config.RemoteState)
 	if err != nil {
 		return cty.NilVal, err
 	}
@@ -381,6 +390,15 @@ type ctyCatalogConfig struct {
 	URLs []string `cty:"urls"`
 }
 
+// ctyEngineConfig is an alternate representation of EngineConfig that converts internal blocks into a map that
+// maps the name to the underlying struct, as opposed to a list representation.
+type ctyEngineConfig struct {
+	Source  string    `cty:"source"`
+	Version string    `cty:"version"`
+	Type    string    `cty:"type"`
+	Meta    cty.Value `cty:"meta"`
+}
+
 // Serialize CatalogConfig to a cty Value, but with maps instead of lists for the blocks.
 func catalogConfigAsCty(config *CatalogConfig) (cty.Value, error) {
 	if config == nil {
@@ -394,9 +412,37 @@ func catalogConfigAsCty(config *CatalogConfig) (cty.Value, error) {
 	return goTypeToCty(configCty)
 }
 
-// ctyTerraformConfig is an alternate representation of TerraformConfig that converts internal blocks into a map that
+// Serialize engineConfigAsCty to a cty Value, but with maps instead of lists for the blocks.
+func engineConfigAsCty(config *EngineConfig) (cty.Value, error) {
+	if config == nil {
+		return cty.NilVal, nil
+	}
+
+	ctyMetaVal, err := convertToCtyWithJson(config.Meta)
+	if err != nil {
+		return cty.NilVal, err
+	}
+
+	var v, t string
+	if config.Version != nil {
+		v = *config.Version
+	}
+	if config.Type != nil {
+		t = *config.Type
+	}
+	configCty := ctyEngineConfig{
+		Source:  config.Source,
+		Version: v,
+		Type:    t,
+		Meta:    ctyMetaVal,
+	}
+
+	return goTypeToCty(configCty)
+}
+
+// CtyTerraformConfig is an alternate representation of TerraformConfig that converts internal blocks into a map that
 // maps the name to the underlying struct, as opposed to a list representation.
-type ctyTerraformConfig struct {
+type CtyTerraformConfig struct {
 	ExtraArgs     map[string]TerraformExtraArguments `cty:"extra_arguments"`
 	Source        *string                            `cty:"source"`
 	IncludeInCopy *[]string                          `cty:"include_in_copy"`
@@ -411,7 +457,7 @@ func terraformConfigAsCty(config *TerraformConfig) (cty.Value, error) {
 		return cty.NilVal, nil
 	}
 
-	configCty := ctyTerraformConfig{
+	configCty := CtyTerraformConfig{
 		Source:        config.Source,
 		IncludeInCopy: config.IncludeInCopy,
 		ExtraArgs:     map[string]TerraformExtraArguments{},
@@ -438,7 +484,7 @@ func terraformConfigAsCty(config *TerraformConfig) (cty.Value, error) {
 
 // Serialize RemoteState to a cty Value. We can't directly serialize the struct because `config` is an arbitrary
 // interface whose type we do not know, so we have to do a hack to go through json.
-func remoteStateAsCty(remoteState *remote.RemoteState) (cty.Value, error) {
+func RemoteStateAsCty(remoteState *remote.RemoteState) (cty.Value, error) {
 	if remoteState == nil {
 		return cty.NilVal, nil
 	}
@@ -464,7 +510,7 @@ func remoteStateAsCty(remoteState *remote.RemoteState) (cty.Value, error) {
 }
 
 // Serialize the list of dependency blocks to a cty Value as a map that maps the block names to the cty representation.
-func dependencyBlocksAsCty(dependencyBlocks []Dependency) (cty.Value, error) {
+func dependencyBlocksAsCty(dependencyBlocks Dependencies) (cty.Value, error) {
 	out := map[string]cty.Value{}
 	for _, block := range dependencyBlocks {
 		blockCty, err := goTypeToCty(block)

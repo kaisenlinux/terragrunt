@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	goErrors "errors"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/gruntwork-io/terragrunt/util"
 
 	"github.com/gruntwork-io/go-commons/errors"
 	"github.com/gruntwork-io/terragrunt/pkg/log"
@@ -18,10 +21,10 @@ import (
 )
 
 const (
-	verifiedChecksum PackageAuthenticationResult = iota
-	officialProvider
-	partnerProvider
-	communityProvider
+	VERIFIED_CHECKSUM PackageAuthenticationResult = iota
+	OFFICIAL_PROVIDER
+	PARTNER_PROVIDER
+	COMMUNITY_PROVIDER
 )
 
 // PackageAuthenticationResult is returned from a PackageAuthentication implementation which implements Stringer.
@@ -46,17 +49,17 @@ func (result *PackageAuthenticationResult) String() string {
 
 // SignedByHashiCorp returns whether the package was authenticated as signed by HashiCorp.
 func (result PackageAuthenticationResult) SignedByHashiCorp() bool {
-	return result == officialProvider
+	return result == OFFICIAL_PROVIDER
 }
 
 // SignedByAnyParty returns whether the package was authenticated as signed by either HashiCorp or by a third-party.
 func (result PackageAuthenticationResult) SignedByAnyParty() bool {
-	return result == officialProvider || result == partnerProvider || result == communityProvider
+	return result == OFFICIAL_PROVIDER || result == PARTNER_PROVIDER || result == COMMUNITY_PROVIDER
 }
 
 // ThirdPartySigned returns whether the package was authenticated as signed by a party other than HashiCorp.
 func (result PackageAuthenticationResult) ThirdPartySigned() bool {
-	return result == partnerProvider || result == communityProvider
+	return result == PARTNER_PROVIDER || result == COMMUNITY_PROVIDER
 }
 
 // PackageAuthentication implementation is responsible for authenticating that a package is what its distributor intended to distribute and that it has not been tampered with.
@@ -133,7 +136,7 @@ func (auth archiveHashAuthentication) Authenticate(path string) (*PackageAuthent
 		return nil, errors.Errorf("archive has incorrect checksum %s (expected %s)", gotHash, wantHash)
 	}
 
-	return NewPackageAuthenticationResult(verifiedChecksum), nil
+	return NewPackageAuthenticationResult(VERIFIED_CHECKSUM), nil
 }
 
 func (a archiveHashAuthentication) AcceptableHashes() []Hash {
@@ -159,14 +162,7 @@ func NewMatchingChecksumAuthentication(document []byte, filename string, wantSHA
 func (auth matchingChecksumAuthentication) Authenticate(location string) (*PackageAuthenticationResult, error) {
 	// Find the checksum in the list with matching filename. The document is in the form "0123456789abcdef filename.zip".
 	filename := []byte(auth.Filename)
-	var checksum []byte
-	for _, line := range bytes.Split(auth.Document, []byte("\n")) {
-		parts := bytes.Fields(line)
-		if len(parts) > 1 && bytes.Equal(parts[1], filename) {
-			checksum = parts[0]
-			break
-		}
-	}
+	checksum := util.MatchSha256Checksum(auth.Document, filename)
 	if checksum == nil {
 		return nil, errors.Errorf("checksum list has no SHA-256 hash for %q", auth.Filename)
 	}
@@ -188,11 +184,11 @@ func (auth matchingChecksumAuthentication) Authenticate(location string) (*Packa
 type signatureAuthentication struct {
 	Document  []byte
 	Signature []byte
-	Keys      []SigningKey
+	Keys      map[string]string
 }
 
 // NewSignatureAuthentication returns a PackageAuthentication implementation that verifies the cryptographic signature for a package against any of the provided keys.
-func NewSignatureAuthentication(document, signature []byte, keys []SigningKey) PackageAuthentication {
+func NewSignatureAuthentication(document, signature []byte, keys map[string]string) PackageAuthentication {
 	return signatureAuthentication{
 		Document:  document,
 		Signature: signature,
@@ -202,7 +198,7 @@ func NewSignatureAuthentication(document, signature []byte, keys []SigningKey) P
 
 func (auth signatureAuthentication) Authenticate(location string) (*PackageAuthenticationResult, error) {
 	// Find the key that signed the checksum file. This can fail if there is no valid signature for any of the provided keys.
-	signingKey, err := auth.findSigningKey()
+	asciiArmor, trustSignature, err := auth.findSigningKey()
 	if err != nil {
 		return nil, err
 	}
@@ -214,22 +210,22 @@ func (auth signatureAuthentication) Authenticate(location string) (*PackageAuthe
 	}
 
 	if err := auth.checkDetachedSignature(hashicorpKeyring, bytes.NewReader(auth.Document), bytes.NewReader(auth.Signature), nil); err == nil {
-		return NewPackageAuthenticationResult(officialProvider), nil
+		return NewPackageAuthenticationResult(OFFICIAL_PROVIDER), nil
 	}
 
 	// If the signing key has a trust signature, attempt to verify it with the HashiCorp partners public key.
-	if signingKey.TrustSignature != "" {
+	if trustSignature != "" {
 		hashicorpPartnersKeyring, err := openpgp.ReadArmoredKeyRing(strings.NewReader(HashicorpPartnersKey))
 		if err != nil {
 			return nil, errors.Errorf("error creating HashiCorp Partners keyring: %s", err)
 		}
 
-		authorKey, err := openpgpArmor.Decode(strings.NewReader(signingKey.ASCIIArmor))
+		authorKey, err := openpgpArmor.Decode(strings.NewReader(asciiArmor))
 		if err != nil {
 			return nil, errors.Errorf("error decoding signing key: %s", err)
 		}
 
-		trustSignature, err := openpgpArmor.Decode(strings.NewReader(signingKey.TrustSignature))
+		trustSignature, err := openpgpArmor.Decode(strings.NewReader(trustSignature))
 		if err != nil {
 			return nil, errors.Errorf("error decoding trust signature: %s", err)
 		}
@@ -238,17 +234,17 @@ func (auth signatureAuthentication) Authenticate(location string) (*PackageAuthe
 			return nil, errors.Errorf("error verifying trust signature: %s", err)
 		}
 
-		return NewPackageAuthenticationResult(partnerProvider), nil
+		return NewPackageAuthenticationResult(PARTNER_PROVIDER), nil
 	}
 
 	// We have a valid signature, but it's not from the HashiCorp key, and it also isn't a trusted partner. This is a community provider.
-	return NewPackageAuthenticationResult(communityProvider), nil
+	return NewPackageAuthenticationResult(COMMUNITY_PROVIDER), nil
 }
 
 func (auth signatureAuthentication) checkDetachedSignature(keyring openpgp.KeyRing, signed, signature io.Reader, config *packet.Config) error {
 	entity, err := openpgp.CheckDetachedSignature(keyring, signed, signature, config)
 
-	if err == openpgpErrors.ErrKeyExpired {
+	if goErrors.Is(err, openpgpErrors.ErrKeyExpired) {
 		for id := range entity.Identities {
 			log.Warnf("expired openpgp key from %s\n", id)
 		}
@@ -262,26 +258,26 @@ func (auth signatureAuthentication) AcceptableHashes() []Hash {
 }
 
 // findSigningKey attempts to verify the signature using each of the keys returned by the registry. If a valid signature is found, it returns the signing key.
-func (auth signatureAuthentication) findSigningKey() (*SigningKey, error) {
-	for _, key := range auth.Keys {
-		keyring, err := openpgp.ReadArmoredKeyRing(strings.NewReader(key.ASCIIArmor))
+func (auth signatureAuthentication) findSigningKey() (string, string, error) {
+	for asciiArmor, trustSignature := range auth.Keys {
+		keyring, err := openpgp.ReadArmoredKeyRing(strings.NewReader(asciiArmor))
 		if err != nil {
-			return nil, errors.Errorf("error decoding signing key: %s", err)
+			return "", "", errors.Errorf("error decoding signing key: %s", err)
 		}
 
 		if err := auth.checkDetachedSignature(keyring, bytes.NewReader(auth.Document), bytes.NewReader(auth.Signature), nil); err != nil {
 			// If the signature issuer does not match the the key, keep trying the rest of the provided keys.
-			if err == openpgpErrors.ErrUnknownIssuer {
+			if goErrors.Is(err, openpgpErrors.ErrUnknownIssuer) {
 				continue
 			}
 
 			// Any other signature error is terminal.
-			return nil, errors.Errorf("error checking signature: %s", err)
+			return "", "", errors.Errorf("error checking signature: %s", err)
 		}
 
-		return &key, nil
+		return asciiArmor, trustSignature, nil
 	}
 
 	// If none of the provided keys issued the signature, this package is unsigned. This is currently a terminal authentication error.
-	return nil, errors.Errorf("authentication signature from unknown issuer")
+	return "", "", errors.Errorf("authentication signature from unknown issuer")
 }

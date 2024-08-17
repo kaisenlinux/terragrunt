@@ -1,3 +1,13 @@
+terragrunt (0.66.8-1kaisen) kaisen-packages; urgency=medium
+
+  * Import the 0.66.8 version
+  * Update the quilt patch
+  * Bump the Standards-Version
+  * Bump the golang-go version required to build
+  * Drop the i386 arch
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Sat, 17 Aug 2024 17:58:05 +0200
+
 terragrunt (0.58.3-1kaisen) kaisen-packages; urgency=medium
 
   * Import the 0.58.3 version

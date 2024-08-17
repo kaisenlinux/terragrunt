@@ -1,6 +1,7 @@
 #!/usr/bin/make -f
 
 export GOPATH=$(CURDIR)/_build
+export GOBIN=$(CURDIR)/_build/bin
 
 %:
 	dh $@ --buildsystem=golang
