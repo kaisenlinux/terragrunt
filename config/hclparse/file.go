@@ -3,7 +3,7 @@ package hclparse
 import (
 	"fmt"
 
-	"github.com/gruntwork-io/go-commons/errors"
+	"github.com/gruntwork-io/terragrunt/internal/errors"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclparse"
@@ -29,11 +29,13 @@ func (file *File) Update(content []byte) error {
 	// Since `hclparse.Parser` has a cache, we need to recreate(clone) the Parser instance without current file
 	// to be able to parse the configuration with the same `configPath`.
 	parser := hclparse.NewParser()
+
 	for configPath, copyfile := range file.Files() {
 		if configPath != file.ConfigPath {
 			parser.AddFile(configPath, copyfile)
 		}
 	}
+
 	file.Parser.Parser = parser
 
 	// we need to reparse the new updated contents. This is necessarily because the blocks
@@ -45,6 +47,7 @@ func (file *File) Update(content []byte) error {
 	}
 
 	file.File = updatedFile.File
+
 	return nil
 }
 
@@ -64,13 +67,13 @@ func (file *File) Decode(out interface{}, evalContext *hcl.EvalContext) (err err
 
 	diags := gohcl.DecodeBody(file.Body, evalContext, out)
 	if err := file.HandleDiagnostics(diags); err != nil {
-		return errors.WithStackTrace(err)
+		return errors.New(err)
 	}
 
 	return nil
 }
 
-// GetBlock takes a parsed HCL file and extracts a reference to the `name` block, if there are defined.
+// Blocks takes a parsed HCL file and extracts a reference to the `name` block, if there are defined.
 func (file *File) Blocks(name string, isMultipleAllowed bool) ([]*Block, error) {
 	catalogSchema := &hcl.BodySchema{
 		Blocks: []hcl.BlockHeaderSchema{
@@ -80,10 +83,11 @@ func (file *File) Blocks(name string, isMultipleAllowed bool) ([]*Block, error) 
 	// We use PartialContent here, because we are only interested in parsing out the catalog block.
 	parsed, _, diags := file.Body.PartialContent(catalogSchema)
 	if err := file.HandleDiagnostics(diags); err != nil {
-		return nil, errors.WithStackTrace(err)
+		return nil, errors.New(err)
 	}
 
 	extractedBlocks := []*Block{}
+
 	for _, block := range parsed.Blocks {
 		if block.Type == name {
 			extractedBlocks = append(extractedBlocks, &Block{
@@ -94,7 +98,7 @@ func (file *File) Blocks(name string, isMultipleAllowed bool) ([]*Block, error) 
 	}
 
 	if len(extractedBlocks) > 1 && !isMultipleAllowed {
-		return nil, errors.WithStackTrace(
+		return nil, errors.New(
 			&hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("Multiple %s block", name),
@@ -110,7 +114,7 @@ func (file *File) JustAttributes() (Attributes, error) {
 	hclAttrs, diags := file.Body.JustAttributes()
 
 	if err := file.HandleDiagnostics(diags); err != nil {
-		return nil, errors.WithStackTrace(err)
+		return nil, errors.New(err)
 	}
 
 	attrs := NewAttributes(file, hclAttrs)

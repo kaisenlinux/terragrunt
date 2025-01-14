@@ -1,6 +1,8 @@
+// Package scaffold provides the command to scaffold a new Terragrunt module.
 package scaffold
 
 import (
+	"github.com/gruntwork-io/terragrunt/cli/commands"
 	"github.com/gruntwork-io/terragrunt/options"
 	"github.com/gruntwork-io/terragrunt/pkg/cli"
 )
@@ -21,8 +23,10 @@ func NewFlags(opts *options.TerragruntOptions) cli.Flags {
 		&cli.SliceFlag[string]{
 			Name:        VarFile,
 			Destination: &opts.ScaffoldVarFiles,
-			Usage:       "Files with variables to be used in modules scaffolding.",
+			Usage:       "Files with variables to be used in unit scaffolding.",
 		},
+		commands.NewNoIncludeRootFlag(opts),
+		commands.NewRootFileNameFlag(opts),
 	}
 }
 
@@ -33,17 +37,21 @@ func NewCommand(opts *options.TerragruntOptions) *cli.Command {
 		DisallowUndefinedFlags: true,
 		Flags:                  NewFlags(opts).Sort(),
 		Action: func(ctx *cli.Context) error {
-			var moduleUrl, templateUrl string
+			var moduleURL, templateURL string
 
 			if val := ctx.Args().Get(0); val != "" {
-				moduleUrl = val
+				moduleURL = val
 			}
 
 			if val := ctx.Args().Get(1); val != "" {
-				templateUrl = val
+				templateURL = val
 			}
 
-			return Run(ctx, opts.OptionsFromContext(ctx), moduleUrl, templateUrl)
+			if opts.ScaffoldRootFileName == "" {
+				opts.ScaffoldRootFileName = commands.GetDefaultRootFileName(opts)
+			}
+
+			return Run(ctx, opts.OptionsFromContext(ctx), moduleURL, templateURL)
 		},
 	}
 }

@@ -7,7 +7,7 @@ Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
                          -o \( -type f -name '*.go'   -print \) ) install-mockery generate-mocks
  	set -xe ;\
 -	vtag_maybe_extra=$$(git describe --tags --abbrev=12 --dirty --broken) ;\
-+	vtag_maybe_extra=0.66.8 ;\
++	vtag_maybe_extra=0.72.0 ;\
  	go build -o $@ -ldflags "-X github.com/gruntwork-io/go-commons/version.Version=$${vtag_maybe_extra} -extldflags '-static'" .
  
  clean:

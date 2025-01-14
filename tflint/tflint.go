@@ -12,8 +12,8 @@ import (
 
 	"github.com/gruntwork-io/terragrunt/shell"
 
-	"github.com/gruntwork-io/go-commons/errors"
 	"github.com/gruntwork-io/terragrunt/config"
+	"github.com/gruntwork-io/terragrunt/internal/errors"
 	"github.com/gruntwork-io/terragrunt/options"
 	"github.com/gruntwork-io/terragrunt/util"
 	"github.com/terraform-linters/tflint/cmd"
@@ -52,12 +52,14 @@ func RunTflintWithOpts(ctx context.Context, opts *options.TerragruntOptions, con
 	if err != nil {
 		return err
 	}
+
 	variables = append(variables, tfVariables...)
 
 	opts.Logger.Debugf("Initializing tflint in directory %s", opts.WorkingDir)
+
 	cli, err := cmd.NewCLI(opts.Writer, opts.ErrWriter)
 	if err != nil {
-		return errors.WithStackTrace(err)
+		return errors.New(err)
 	}
 
 	tflintArgs, externalTfLint := tflintArguments(hook.Execute[1:])
@@ -66,16 +68,18 @@ func RunTflintWithOpts(ctx context.Context, opts *options.TerragruntOptions, con
 	initArgs := []string{"tflint", "--init", "--config", configFile, "--chdir", opts.WorkingDir}
 	if externalTfLint {
 		opts.Logger.Debugf("Running external tflint init with args %v", initArgs)
+
 		_, err := shell.RunShellCommandWithOutput(ctx, opts, opts.WorkingDir, false, false,
 			initArgs[0], initArgs[1:]...)
 		if err != nil {
-			return errors.WithStackTrace(ErrorRunningTflint{args: initArgs})
+			return errors.New(ErrorRunningTflint{args: initArgs})
 		}
 	} else {
 		opts.Logger.Debugf("Running internal tflint init with args %v", initArgs)
+
 		statusCode := cli.Run(initArgs)
 		if statusCode != 0 {
-			return errors.WithStackTrace(ErrorRunningTflint{args: initArgs})
+			return errors.New(ErrorRunningTflint{args: initArgs})
 		}
 	}
 
@@ -90,11 +94,13 @@ func RunTflintWithOpts(ctx context.Context, opts *options.TerragruntOptions, con
 
 	if externalTfLint {
 		opts.Logger.Debugf("Running external tflint with args %v", args)
+
 		_, err := shell.RunShellCommandWithOutput(ctx, opts, opts.WorkingDir, false, false,
 			args[0], args[1:]...)
 		if err != nil {
-			return errors.WithStackTrace(ErrorRunningTflint{args: args})
+			return errors.New(ErrorRunningTflint{args: args})
 		}
+
 		opts.Logger.Info("Tflint has run successfully. No issues found.")
 	} else {
 		opts.Logger.Debugf("Running internal tflint with args %v", args)
@@ -102,15 +108,16 @@ func RunTflintWithOpts(ctx context.Context, opts *options.TerragruntOptions, con
 
 		switch statusCode {
 		case cmd.ExitCodeError:
-			return errors.WithStackTrace(ErrorRunningTflint{args: initArgs})
+			return errors.New(ErrorRunningTflint{args: initArgs})
 		case cmd.ExitCodeIssuesFound:
-			return errors.WithStackTrace(IssuesFound{})
+			return errors.New(IssuesFound{})
 		case cmd.ExitCodeOK:
 			opts.Logger.Info("Tflint has run successfully. No issues found.")
 		default:
-			return errors.WithStackTrace(UnknownError{statusCode: statusCode})
+			return errors.New(UnknownError{statusCode: statusCode})
 		}
 	}
+
 	return nil
 }
 
@@ -125,8 +132,10 @@ func tflintArguments(arguments []string) ([]string, bool) {
 			externalTfLint = true
 			continue
 		}
+
 		filteredArguments = append(filteredArguments, arg)
 	}
+
 	return filteredArguments, externalTfLint
 }
 
@@ -137,14 +146,16 @@ func tflintConfigFilePath(arguments []string) string {
 			return arguments[i+1]
 		}
 	}
+
 	return ""
 }
 
 // InputsToTflintVar converts the inputs map to a list of tflint variables.
 func InputsToTflintVar(inputs map[string]interface{}) ([]string, error) {
 	variables := make([]string, 0, len(inputs))
+
 	for key, value := range inputs {
-		varValue, err := util.AsTerraformEnvVarJsonValue(value)
+		varValue, err := util.AsTerraformEnvVarJSONValue(value)
 		if err != nil {
 			return nil, err
 		}
@@ -152,6 +163,7 @@ func InputsToTflintVar(inputs map[string]interface{}) ([]string, error) {
 		newVar := fmt.Sprintf("--var=%s=%s", key, varValue)
 		variables = append(variables, newVar)
 	}
+
 	return variables, nil
 }
 
@@ -165,24 +177,27 @@ func tfArgumentsToTflintVar(terragruntOptions *options.TerragruntOptions, hook c
 		if len(collections.ListIntersection(arg.Commands, hook.Commands)) == 0 {
 			continue
 		}
+
 		if arg.EnvVars != nil {
 			// extract env_vars
 			for name, value := range *arg.EnvVars {
 				if strings.HasPrefix(name, tfVarPrefix) {
 					varName := strings.TrimPrefix(name, tfVarPrefix)
-					varValue, err := util.AsTerraformEnvVarJsonValue(value)
+
+					varValue, err := util.AsTerraformEnvVarJSONValue(value)
 					if err != nil {
 						return nil, err
 					}
+
 					newVar := fmt.Sprintf("--var='%s=%s'", varName, varValue)
 					variables = append(variables, newVar)
 				}
 			}
 		}
+
 		if arg.Arguments != nil {
 			// extract variables and var files from arguments
 			for _, value := range *arg.Arguments {
-
 				if strings.HasPrefix(value, argVarPrefix) {
 					varName := strings.TrimPrefix(value, argVarPrefix)
 					newVar := fmt.Sprintf("--var='%s'", varName)
@@ -216,7 +231,6 @@ func tfArgumentsToTflintVar(terragruntOptions *options.TerragruntOptions, hook c
 				}
 			}
 		}
-
 	}
 
 	return variables, nil
@@ -233,7 +247,7 @@ func findTflintConfigInProject(terragruntOptions *options.TerragruntOptions) (st
 		terragruntOptions.Logger.Debugf("Finding .tflint.hcl file from %s and going to %s", previousDir, currentDir)
 
 		if currentDir == previousDir {
-			return "", errors.WithStackTrace(ConfigNotFound{cause: "Traversed all the day to the root"})
+			return "", errors.New(ConfigNotFound{cause: "Traversed all the day to the root"})
 		}
 
 		fileToFind := util.JoinPath(previousDir, ".tflint.hcl")
@@ -245,7 +259,7 @@ func findTflintConfigInProject(terragruntOptions *options.TerragruntOptions) (st
 		previousDir = currentDir
 	}
 
-	return "", errors.WithStackTrace(ConfigNotFound{
+	return "", errors.New(ConfigNotFound{
 		cause: fmt.Sprintf("Exceeded maximum folders to check (%d)", terragruntOptions.MaxFoldersToCheck),
 	})
 }

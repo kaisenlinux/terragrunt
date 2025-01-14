@@ -33,7 +33,7 @@ dependencies {
 	assert.Equal(t, "../app1", terragruntConfig.Dependencies.Paths[0])
 	assert.Equal(t, map[string]interface{}{"app1": "../app1"}, terragruntConfig.Locals)
 
-	assert.False(t, terragruntConfig.Skip)
+	assert.Nil(t, terragruntConfig.Skip)
 	assert.Nil(t, terragruntConfig.PreventDestroy)
 	assert.Nil(t, terragruntConfig.Terraform)
 	assert.Nil(t, terragruntConfig.RemoteState)
@@ -81,7 +81,8 @@ skip = true
 	assert.Len(t, terragruntConfig.Dependencies.Paths, 1)
 	assert.Equal(t, "../app1", terragruntConfig.Dependencies.Paths[0])
 
-	assert.True(t, terragruntConfig.Skip)
+	assert.NotNil(t, terragruntConfig.Skip)
+	assert.True(t, *terragruntConfig.Skip)
 	assert.True(t, *terragruntConfig.PreventDestroy)
 
 	assert.Nil(t, terragruntConfig.Terraform)
@@ -99,7 +100,7 @@ func TestPartialParseOmittedItems(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, terragruntConfig.IsPartial)
 	assert.Nil(t, terragruntConfig.Dependencies)
-	assert.False(t, terragruntConfig.Skip)
+	assert.Nil(t, terragruntConfig.Skip)
 	assert.Nil(t, terragruntConfig.PreventDestroy)
 	assert.Nil(t, terragruntConfig.Terraform)
 	assert.Nil(t, terragruntConfig.RemoteState)
@@ -110,7 +111,7 @@ func TestPartialParseOmittedItems(t *testing.T) {
 func TestPartialParseDoesNotResolveIgnoredBlockEvenInParent(t *testing.T) {
 	t.Parallel()
 
-	opts := mockOptionsForTestWithConfigPath(t, "../test/fixture-partial-parse/ignore-bad-block-in-parent/child/"+config.DefaultTerragruntConfigPath)
+	opts := mockOptionsForTestWithConfigPath(t, "../test/fixtures/partial-parse/ignore-bad-block-in-parent/child/"+config.DefaultTerragruntConfigPath)
 
 	ctx := config.NewParsingContext(context.Background(), opts)
 	_, err := config.PartialParseConfigFile(ctx.WithDecodeList(config.TerragruntFlags), opts.TerragruntConfigPath, nil)
@@ -123,7 +124,7 @@ func TestPartialParseDoesNotResolveIgnoredBlockEvenInParent(t *testing.T) {
 func TestPartialParseOnlyInheritsSelectedBlocksFlags(t *testing.T) {
 	t.Parallel()
 
-	opts := mockOptionsForTestWithConfigPath(t, "../test/fixture-partial-parse/partial-inheritance/child/"+config.DefaultTerragruntConfigPath)
+	opts := mockOptionsForTestWithConfigPath(t, "../test/fixtures/partial-parse/partial-inheritance/child/"+config.DefaultTerragruntConfigPath)
 
 	ctx := config.NewParsingContext(context.Background(), opts).WithDecodeList(config.TerragruntFlags)
 	terragruntConfig, err := config.PartialParseConfigFile(ctx, opts.TerragruntConfigPath, nil)
@@ -131,7 +132,7 @@ func TestPartialParseOnlyInheritsSelectedBlocksFlags(t *testing.T) {
 
 	assert.True(t, terragruntConfig.IsPartial)
 	assert.Nil(t, terragruntConfig.Dependencies)
-	assert.False(t, terragruntConfig.Skip)
+	assert.Nil(t, terragruntConfig.Skip)
 	assert.True(t, *terragruntConfig.PreventDestroy)
 	assert.Nil(t, terragruntConfig.Terraform)
 	assert.Nil(t, terragruntConfig.RemoteState)
@@ -142,7 +143,7 @@ func TestPartialParseOnlyInheritsSelectedBlocksFlags(t *testing.T) {
 func TestPartialParseOnlyInheritsSelectedBlocksDependencies(t *testing.T) {
 	t.Parallel()
 
-	opts := mockOptionsForTestWithConfigPath(t, "../test/fixture-partial-parse/partial-inheritance/child/"+config.DefaultTerragruntConfigPath)
+	opts := mockOptionsForTestWithConfigPath(t, "../test/fixtures/partial-parse/partial-inheritance/child/"+config.DefaultTerragruntConfigPath)
 
 	ctx := config.NewParsingContext(context.Background(), opts).WithDecodeList(config.DependenciesBlock)
 	terragruntConfig, err := config.PartialParseConfigFile(ctx, opts.TerragruntConfigPath, nil)
@@ -154,7 +155,7 @@ func TestPartialParseOnlyInheritsSelectedBlocksDependencies(t *testing.T) {
 	assert.Len(t, terragruntConfig.Dependencies.Paths, 1)
 	assert.Equal(t, "../app1", terragruntConfig.Dependencies.Paths[0])
 
-	assert.False(t, terragruntConfig.Skip)
+	assert.Nil(t, terragruntConfig.Skip)
 	assert.Nil(t, terragruntConfig.PreventDestroy)
 	assert.Nil(t, terragruntConfig.Terraform)
 	assert.Nil(t, terragruntConfig.RemoteState)

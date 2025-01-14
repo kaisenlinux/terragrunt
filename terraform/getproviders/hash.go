@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/gruntwork-io/go-commons/errors"
-	"github.com/rogpeppe/go-internal/dirhash"
+	"github.com/gruntwork-io/terragrunt/internal/errors"
+	"golang.org/x/mod/sumdb/dirhash"
 )
 
 // Hash is a specially-formatted string representing a checksum of a package or the contents of the package.
@@ -40,21 +40,22 @@ func (scheme HashScheme) New(value string) Hash {
 func PackageHashLegacyZipSHA(path string) (Hash, error) {
 	archivePath, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		return "", errors.WithStackTrace(err)
+		return "", errors.New(err)
 	}
 
 	file, err := os.Open(archivePath)
 	if err != nil {
-		return "", errors.WithStackTrace(err)
+		return "", errors.New(err)
 	}
 	defer file.Close()
 
 	hash := sha256.New()
 	if _, err = io.Copy(hash, file); err != nil {
-		return "", errors.WithStackTrace(err)
+		return "", errors.New(err)
 	}
 
 	gotHash := hash.Sum(nil)
+
 	return HashSchemeZip.New(hex.EncodeToString(gotHash)), nil
 }
 
@@ -72,12 +73,13 @@ func PackageHashV1(path string) (Hash, error) {
 	}
 
 	if fileInfo, err := os.Stat(packageDir); err != nil {
-		return "", errors.WithStackTrace(err)
+		return "", errors.New(err)
 	} else if !fileInfo.IsDir() {
 		return "", errors.Errorf("packageDir is not a directory %q", packageDir)
 	}
 
 	s, err := dirhash.HashDir(packageDir, "", dirhash.Hash1)
+
 	return Hash(s), err
 }
 
@@ -87,6 +89,7 @@ func DocumentHashes(doc []byte) []Hash {
 	sc := bufio.NewScanner(bytes.NewReader(doc))
 	for sc.Scan() {
 		parts := bytes.Fields(sc.Bytes())
+
 		columns := 2
 		if len(parts) != columns {
 			// Doesn't look like a valid sums file line, so we'll assume this whole thing isn't a checksums file.
@@ -95,6 +98,7 @@ func DocumentHashes(doc []byte) []Hash {
 
 		// If this is a checksums file then the first part should be a hex-encoded SHA256 hash, so it should be 64 characters long and contain only hex digits.
 		hashStr := parts[0]
+
 		hashLen := 64
 		if len(hashStr) != hashLen {
 			return nil // doesn't look like a checksums file

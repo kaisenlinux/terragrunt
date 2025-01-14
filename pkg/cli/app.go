@@ -1,3 +1,4 @@
+// Package cli provides functionality for the Terragrunt CLI.
 package cli
 
 import (
@@ -5,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/gruntwork-io/go-commons/errors"
+	"github.com/gruntwork-io/terragrunt/internal/errors"
 	"github.com/urfave/cli/v2"
 )
 
@@ -15,7 +16,7 @@ import (
 // regardless of their position among the others registered commands and flags.
 //
 // For example, CLI command:
-// `terragrunt run-all apply --terragrunt-log-level debug --auto-approve --terragrunt-non-interactive`
+// `terragrunt run-all apply --terragrunt-log-level trace --auto-approve --terragrunt-non-interactive`
 // The `App` will runs the registered command `run-all`, define the registered flags `--terragrunt-log-level`,
 // `--terragrunt-non-interactive`, and define args `apply --auto-approve` which can be obtained from the App context,
 // ctx.Args().Slice()
@@ -44,6 +45,11 @@ type App struct {
 	// OsExiter is the function used when the app exits. If not set defaults to os.Exit.
 	OsExiter func(code int)
 
+	// ExitErrHandler processes any error encountered while running an App before
+	// it is returned to the caller. If no function is provided, HandleExitCoder
+	// is used as the default behavior.
+	ExitErrHandler ExitErrHandlerFunc
+
 	// Autocomplete enables or disables subcommand auto-completion support.
 	// This is enabled by default when NewApp is called. Otherwise, this
 	// must enabled explicitly.
@@ -69,8 +75,11 @@ type App struct {
 
 // NewApp returns app new App instance.
 func NewApp() *App {
+	cliApp := cli.NewApp()
+	cliApp.ExitErrHandler = func(_ *cli.Context, _ error) {}
+
 	return &App{
-		App:          cli.NewApp(),
+		App:          cliApp,
 		OsExiter:     os.Exit,
 		Autocomplete: true,
 	}
@@ -97,16 +106,17 @@ func (app *App) Run(arguments []string) error {
 func (app *App) RunContext(ctx context.Context, arguments []string) (err error) {
 	// remove empty args
 	filteredArguments := []string{}
+
 	for _, arg := range arguments {
 		if trimmedArg := strings.TrimSpace(arg); len(trimmedArg) > 0 {
 			filteredArguments = append(filteredArguments, trimmedArg)
 		}
 	}
+
 	arguments = filteredArguments
 
 	app.SkipFlagParsing = true
 	app.Authors = []*cli.Author{{Name: app.Author}}
-
 	app.App.Action = func(parentCtx *cli.Context) error {
 		cmd := app.newRootCommand()
 
@@ -115,7 +125,7 @@ func (app *App) RunContext(ctx context.Context, arguments []string) (err error) 
 
 		if app.Autocomplete {
 			if err := app.setupAutocomplete(args); err != nil {
-				return app.handleExitCoder(err)
+				return app.handleExitCoder(ctx, err)
 			}
 
 			if compLine := os.Getenv(envCompleteLine); compLine != "" {
@@ -127,6 +137,7 @@ func (app *App) RunContext(ctx context.Context, arguments []string) (err error) 
 				ctx.shellComplete = true
 			}
 		}
+
 		return cmd.Run(ctx, args.Normalize(SingleDashFlag))
 	}
 
@@ -143,6 +154,7 @@ func (app *App) VisibleCommands() []*cli.Command {
 	if app.Commands == nil {
 		return nil
 	}
+
 	return app.Commands.VisibleCommands()
 }
 
@@ -215,6 +227,14 @@ func (app *App) setupAutocomplete(arguments []string) error {
 	return nil
 }
 
-func (app *App) handleExitCoder(err error) error {
-	return handleExitCoder(err, app.OsExiter)
+func (app *App) handleExitCoder(ctx *Context, err error) error {
+	if err == nil || err.Error() == "" {
+		return nil
+	}
+
+	if app.ExitErrHandler != nil {
+		return app.ExitErrHandler(ctx, err)
+	}
+
+	return handleExitCoder(ctx, err, app.OsExiter)
 }

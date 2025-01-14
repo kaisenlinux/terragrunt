@@ -82,7 +82,7 @@ func TestTerragruntConfigAsCtyDrift(t *testing.T) {
 		},
 		DownloadDir:    ".terragrunt-cache",
 		PreventDestroy: &testTrue,
-		Skip:           true,
+		Skip:           &testTrue,
 		IamRole:        "terragruntRole",
 		Inputs: map[string]interface{}{
 			"aws_region": "us-east-1",
@@ -102,6 +102,30 @@ func TestTerragruntConfigAsCtyDrift(t *testing.T) {
 				RenderedOutputs:                     &mockOutputs,
 			},
 		},
+		FeatureFlags: config.FeatureFlags{
+			&config.FeatureFlag{
+				Name:    "test",
+				Default: &cty.Zero,
+			},
+		},
+		Errors: &config.ErrorsConfig{
+			Retry: []*config.RetryBlock{
+				{
+					Label:            "test",
+					RetryableErrors:  []string{"test"},
+					MaxAttempts:      0,
+					SleepIntervalSec: 0,
+				},
+			},
+			Ignore: []*config.IgnoreBlock{
+				{
+					Label:           "test",
+					IgnorableErrors: nil,
+					Message:         "",
+					Signals:         nil,
+				},
+			},
+		},
 		GenerateConfigs: map[string]codegen.GenerateConfig{
 			"provider": {
 				Path:          "foo",
@@ -113,6 +137,7 @@ func TestTerragruntConfigAsCtyDrift(t *testing.T) {
 }`,
 			},
 		},
+		Exclude: &config.ExcludeConfig{},
 	}
 	ctyVal, err := config.TerragruntConfigAsCty(&testConfig)
 	require.NoError(t, err)
@@ -194,6 +219,8 @@ func TestTerraformConfigAsCtyDrift(t *testing.T) {
 }
 
 func terragruntConfigStructFieldToMapKey(t *testing.T, fieldName string) (string, bool) {
+	t.Helper()
+
 	switch fieldName {
 	case "Catalog":
 		return "catalog", true
@@ -247,6 +274,12 @@ func terragruntConfigStructFieldToMapKey(t *testing.T, fieldName string) (string
 		return "dependent_modules", true
 	case "Engine":
 		return "engine", true
+	case "FeatureFlags":
+		return "feature", true
+	case "Exclude":
+		return "exclude", true
+	case "Errors":
+		return "errors", true
 	default:
 		t.Fatalf("Unknown struct property: %s", fieldName)
 		// This should not execute
@@ -255,6 +288,8 @@ func terragruntConfigStructFieldToMapKey(t *testing.T, fieldName string) (string
 }
 
 func remoteStateStructFieldToMapKey(t *testing.T, fieldName string) (string, bool) {
+	t.Helper()
+
 	switch fieldName {
 	case "Backend":
 		return "backend", true

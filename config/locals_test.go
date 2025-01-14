@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zclconf/go-cty/cty/gocty"
 
-	"github.com/gruntwork-io/go-commons/errors"
 	"github.com/gruntwork-io/terragrunt/config"
 	"github.com/gruntwork-io/terragrunt/config/hclparse"
+	"github.com/gruntwork-io/terragrunt/internal/errors"
 )
 
 func TestEvaluateLocalsBlock(t *testing.T) {
@@ -39,9 +39,9 @@ func TestEvaluateLocalsBlock(t *testing.T) {
 	require.NoError(t, gocty.FromCtyValue(evaluatedLocals["x"], &actualX))
 	assert.InEpsilon(t, float64(1), actualX, 0.0000001)
 
-	var actualY float64
-	require.NoError(t, gocty.FromCtyValue(evaluatedLocals["y"], &actualY))
-	assert.InEpsilon(t, float64(2), actualY, 0.0000001)
+	var actualY float64                                                    //codespell:ignore
+	require.NoError(t, gocty.FromCtyValue(evaluatedLocals["y"], &actualY)) //codespell:ignore
+	assert.InEpsilon(t, float64(2), actualY, 0.0000001)                    //codespell:ignore
 
 	var actualZ float64
 	require.NoError(t, gocty.FromCtyValue(evaluatedLocals["z"], &actualZ))

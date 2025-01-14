@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gruntwork-io/go-commons/errors"
+	"github.com/gruntwork-io/terragrunt/internal/errors"
 	"github.com/gruntwork-io/terragrunt/terraform/cache/helpers"
 	"github.com/gruntwork-io/terragrunt/terraform/cache/models"
 	"github.com/gruntwork-io/terragrunt/terraform/cache/router"
@@ -22,7 +22,6 @@ type ProviderNetworkMirrorHandler struct {
 	*CommonProviderHandler
 
 	*http.Client
-	providerService             *services.ProviderService
 	cacheProviderHTTPStatusCode int
 	networkMirrorURL            *url.URL
 	credsSource                 *cliconfig.CredentialsSource
@@ -31,13 +30,12 @@ type ProviderNetworkMirrorHandler struct {
 func NewProviderNetworkMirrorHandler(providerService *services.ProviderService, cacheProviderHTTPStatusCode int, networkMirror *cliconfig.ProviderInstallationNetworkMirror, credsSource *cliconfig.CredentialsSource) (ProviderHandler, error) {
 	networkMirrorURL, err := url.Parse(networkMirror.URL)
 	if err != nil {
-		return nil, errors.WithStackTrace(err)
+		return nil, errors.New(err)
 	}
 
 	return &ProviderNetworkMirrorHandler{
-		CommonProviderHandler:       NewCommonProviderHandler(networkMirror.Include, networkMirror.Exclude),
+		CommonProviderHandler:       NewCommonProviderHandler(providerService, networkMirror.Include, networkMirror.Exclude),
 		Client:                      &http.Client{},
-		providerService:             providerService,
 		cacheProviderHTTPStatusCode: cacheProviderHTTPStatusCode,
 		networkMirrorURL:            networkMirrorURL,
 		credsSource:                 credsSource,
@@ -108,6 +106,7 @@ func (handler *ProviderNetworkMirrorHandler) GetPlatform(ctx echo.Context, provi
 
 	// start caching and return 423 status
 	handler.providerService.CacheProvider(ctx.Request().Context(), cacheRequestID, provider)
+
 	return ctx.NoContent(handler.cacheProviderHTTPStatusCode)
 }
 
@@ -121,7 +120,7 @@ func (handler *ProviderNetworkMirrorHandler) do(ctx echo.Context, method, reqPat
 
 	req, err := http.NewRequestWithContext(ctx.Request().Context(), method, reqURL, nil)
 	if err != nil {
-		return errors.WithStackTrace(err)
+		return errors.New(err)
 	}
 
 	if handler.credsSource != nil {
@@ -133,7 +132,7 @@ func (handler *ProviderNetworkMirrorHandler) do(ctx echo.Context, method, reqPat
 
 	resp, err := handler.Client.Do(req)
 	if err != nil {
-		return errors.WithStackTrace(err)
+		return errors.New(err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
 

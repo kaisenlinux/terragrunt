@@ -40,31 +40,40 @@ type CatalogConfig struct {
 	URLs []string `hcl:"urls,attr" cty:"urls"`
 }
 
-func (conf *CatalogConfig) String() string {
-	return fmt.Sprintf("Catalog{URLs = %v}", conf.URLs)
+func (cfg *CatalogConfig) String() string {
+	return fmt.Sprintf("Catalog{URLs = %v}", cfg.URLs)
 }
 
-func (config *CatalogConfig) normalize(cofnigPath string) {
-	configDir := filepath.Dir(cofnigPath)
+func (cfg *CatalogConfig) normalize(configPath string) {
+	configDir := filepath.Dir(configPath)
 
 	// transform relative paths to absolute ones
-	for i, url := range config.URLs {
+	for i, url := range cfg.URLs {
 		url := filepath.Join(configDir, url)
 
 		if files.FileExists(url) {
-			config.URLs[i] = url
+			cfg.URLs[i] = url
 		}
 	}
 }
 
+// ReadCatalogConfig reads the `catalog` block from the nearest `terragrunt.hcl` file in the parent directories.
+//
 // We want users to be able to browse to any folder in an `infra-live` repo, run `terragrunt catalog` (with no URL) arg.
-// ReadCatalogConfig looks for the "nearest" `terragrunt.hcl` in the parent directories if the given `opts.TerragruntConfigPath` does not exist. Since our normal parsing `ParseConfig` does not always work, as some `terragrunt.hcl` files are meant to be used from an `include` and/or they might use `find_in_parent_folders` and they only work from certain child folders, it parses this file to see if the config contains `include{...find_in_parent_folders()...}` block to determine if it is the root configuration. If it finds `terragrunt.hcl` that already has `include`, then read that configuration as is, oterwise generate a stub child `terragrunt.hcl` in memory with an `include` to pull in the one we found.
-// Unlike "RoadTerragruntConfig" func, it ignores any configuration errors not related to the "catalog" block.
+// ReadCatalogConfig looks for the "nearest" `terragrunt.hcl` in the parent directories if the given
+// `opts.TerragruntConfigPath` does not exist. Since our normal parsing `ParseConfig` does not always work,
+// as some `terragrunt.hcl` files are meant to be used from an `include` and/or they might use
+// `find_in_parent_folders` and they only work from certain child folders, it parses this file to see if the
+// config contains `include{...find_in_parent_folders()...}` block to determine if it is the root configuration.
+// If it finds `terragrunt.hcl` that already has `include`, then read that configuration as is,
+// otherwise generate a stub child `terragrunt.hcl` in memory with an `include` to pull in the one we found.
+// Unlike the "ReadTerragruntConfig" func, it ignores any configuration errors not related to the "catalog" block.
 func ReadCatalogConfig(parentCtx context.Context, opts *options.TerragruntOptions) (*CatalogConfig, error) {
 	configPath, configString, err := findCatalogConfig(parentCtx, opts)
 	if err != nil || configPath == "" {
 		return nil, err
 	}
+
 	opts.TerragruntConfigPath = configPath
 
 	ctx := NewParsingContext(parentCtx, opts)
@@ -82,15 +91,16 @@ func ReadCatalogConfig(parentCtx context.Context, opts *options.TerragruntOption
 
 func findCatalogConfig(ctx context.Context, opts *options.TerragruntOptions) (string, string, error) {
 	var (
-		configPath        = opts.TerragruntConfigPath
-		configName        = filepath.Base(configPath)
+		configPath        = filepath.Join(filepath.Dir(opts.TerragruntConfigPath), opts.ScaffoldRootFileName)
+		configName        = opts.ScaffoldRootFileName
 		catalogConfigPath string
 	)
 
 	for {
 		opts = &options.TerragruntOptions{
-			TerragruntConfigPath: filepath.Join(filepath.Dir(configPath), util.UniqueId(), configName),
+			TerragruntConfigPath: filepath.Join(filepath.Dir(configPath), util.UniqueID(), configName),
 			MaxFoldersToCheck:    opts.MaxFoldersToCheck,
+			Logger:               opts.Logger,
 		}
 
 		// This allows to stop the process by pressing Ctrl-C, in case the loop is endless,
@@ -98,8 +108,7 @@ func findCatalogConfig(ctx context.Context, opts *options.TerragruntOptions) (st
 		select {
 		case <-ctx.Done():
 			return "", "", nil
-		default:
-			// continue
+		default: // continue
 		}
 
 		newConfigPath, err := FindInParentFolders(NewParsingContext(ctx, opts), []string{configName})
@@ -108,6 +117,7 @@ func findCatalogConfig(ctx context.Context, opts *options.TerragruntOptions) (st
 			if ok := errors.As(err, &parentFileNotFoundError); ok {
 				break
 			}
+
 			return "", "", err
 		}
 
@@ -133,7 +143,7 @@ func findCatalogConfig(ctx context.Context, opts *options.TerragruntOptions) (st
 	// and the path one directory deeper in order for `find_in_parent_folders` can find the catalog configuration.
 	if catalogConfigPath != "" {
 		configString := fmt.Sprintf(rootConfigFmt, configName)
-		configPath = filepath.Join(filepath.Dir(catalogConfigPath), util.UniqueId(), configName)
+		configPath = filepath.Join(filepath.Dir(catalogConfigPath), util.UniqueID(), configName)
 
 		return configPath, configString, nil
 	}
@@ -156,6 +166,16 @@ func convertToTerragruntCatalogConfig(ctx *ParsingContext, configPath string, te
 	if terragruntConfigFromFile.Engine != nil {
 		terragruntConfig.Engine = terragruntConfigFromFile.Engine
 		terragruntConfig.SetFieldMetadata(MetadataEngine, defaultMetadata)
+	}
+
+	if terragruntConfigFromFile.Exclude != nil {
+		terragruntConfig.Exclude = terragruntConfigFromFile.Exclude
+		terragruntConfig.SetFieldMetadata(MetadataExclude, defaultMetadata)
+	}
+
+	if terragruntConfigFromFile.Errors != nil {
+		terragruntConfig.Errors = terragruntConfigFromFile.Errors
+		terragruntConfig.SetFieldMetadata(MetadataErrors, defaultMetadata)
 	}
 
 	if ctx.Locals != nil && *ctx.Locals != cty.NilVal {

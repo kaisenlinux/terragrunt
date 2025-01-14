@@ -11,6 +11,7 @@ import (
 
 	"fmt"
 
+	"github.com/gruntwork-io/terragrunt/pkg/log"
 	"github.com/gruntwork-io/terragrunt/test/helpers"
 	"github.com/gruntwork-io/terragrunt/util"
 	"github.com/stretchr/testify/assert"
@@ -101,8 +102,8 @@ func TestGlobCanonicalPath(t *testing.T) {
 		{[]string{"module-a", "module-b/module-b-child/.."}, []string{expectedHelper("module-a"), expectedHelper("module-b")}},
 		{[]string{"*-a", "*-b"}, []string{expectedHelper("module-a"), expectedHelper("module-b")}},
 		{[]string{"module-*"}, []string{expectedHelper("module-a"), expectedHelper("module-b")}},
-		{[]string{"module-*/*.hcl"}, []string{expectedHelper("module-a/terragrunt.hcl"), expectedHelper("module-b/terragrunt.hcl")}},
-		{[]string{"module-*/**/*.hcl"}, []string{expectedHelper("module-a/terragrunt.hcl"), expectedHelper("module-b/terragrunt.hcl"), expectedHelper("module-b/module-b-child/terragrunt.hcl")}},
+		{[]string{"module-*/*.hcl"}, []string{expectedHelper("module-a/terragrunt.hcl"), expectedHelper("module-b/root.hcl")}},
+		{[]string{"module-*/**/*.hcl"}, []string{expectedHelper("module-a/terragrunt.hcl"), expectedHelper("module-b/root.hcl"), expectedHelper("module-b/module-b-child/terragrunt.hcl")}},
 	}
 
 	for i, tt := range tc {
@@ -218,7 +219,7 @@ func TestFileManifest(t *testing.T) {
 	testfiles = append(testfiles, path.Join(dir, "ephemeral-file-that-doesnt-exist.txt"))
 
 	// create a manifest
-	manifest := util.NewFileManifest(dir, ".terragrunt-test-manifest")
+	manifest := util.NewFileManifest(log.New(), dir, ".terragrunt-test-manifest")
 	require.NoError(t, manifest.Create())
 	// check the file manifest has been created
 	assert.FileExists(t, filepath.Join(manifest.ManifestFolder, manifest.ManifestFile))
@@ -361,9 +362,99 @@ func TestIncludeInCopy(t *testing.T) {
 		assert.NoError(t, os.WriteFile(path, fileContent, 0644))
 	}
 
-	require.NoError(t, util.CopyFolderContents(source, destination, ".terragrunt-test", includeInCopy))
+	require.NoError(t, util.CopyFolderContents(log.New(), source, destination, ".terragrunt-test", includeInCopy, nil))
 
 	for i, tt := range tc {
+
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			t.Parallel()
+
+			_, err := os.Stat(filepath.Join(destination, tt.path))
+			assert.True(t,
+				tt.copyExpected && err == nil ||
+					!tt.copyExpected && errors.Is(err, os.ErrNotExist),
+				"Unexpected copy result for file '%s' (should be copied: '%t') - got error: %s", tt.path, tt.copyExpected, err)
+		})
+	}
+}
+
+func TestExcludeFromCopy(t *testing.T) {
+	t.Parallel()
+
+	excludeFromCopy := []string{"module/region2", "**/exclude-me-here", "**/app1"}
+
+	testCases := []struct {
+		path         string
+		copyExpected bool
+	}{
+		{"/app/terragrunt.hcl", true},
+		{"/module/main.tf", true},
+		{"/module/region1/info.txt", true},
+		{"/module/region1/project2-1/app1/f2-dot-f2.txt", false},
+		{"/module/region3/project3-1/f1-2-levels.txt", true},
+		{"/module/region3/project3-1/app1/exclude-me-here/file.txt", false},
+		{"/module/region3/project3-2/f0/f0-3-levels.txt", true},
+		{"/module/region2/project2-1/app2/f2-dot-f2.txt", false},
+		{"/module/region2/project2-1/readme.txt", false},
+		{"/module/region2/project2-2/f2-dot-f0.txt", false},
+	}
+
+	tempDir := t.TempDir()
+	source := filepath.Join(tempDir, "source")
+	destination := filepath.Join(tempDir, "destination")
+
+	fileContent := []byte("source file")
+	for _, tt := range testCases {
+		path := filepath.Join(source, tt.path)
+		assert.NoError(t, os.MkdirAll(filepath.Dir(path), os.ModePerm))
+		assert.NoError(t, os.WriteFile(path, fileContent, 0644))
+	}
+
+	require.NoError(t, util.CopyFolderContents(log.New(), source, destination, ".terragrunt-test", nil, excludeFromCopy))
+
+	for i, testCase := range testCases {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			t.Parallel()
+
+			_, err := os.Stat(filepath.Join(destination, testCase.path))
+			assert.True(t,
+				testCase.copyExpected && err == nil ||
+					!testCase.copyExpected && errors.Is(err, os.ErrNotExist),
+				"Unexpected copy result for file '%s' (should be copied: '%t') - got error: %s", testCase.path, testCase.copyExpected, err)
+		})
+	}
+}
+
+func TestExcludeIncludeBehaviourPriority(t *testing.T) {
+	t.Parallel()
+
+	includeInCopy := []string{"_module/.region2", "_module/.region3"}
+	excludeFromCopy := []string{"**/.project2-2", "_module/.region3"}
+
+	testCases := []struct {
+		path         string
+		copyExpected bool
+	}{
+		{"/_module/.region2/.project2-1/app2/f2-dot-f2.txt", true},
+		{"/_module/.region2/.project2-1/readme.txt", true},
+		{"/_module/.region2/.project2-2/f2-dot-f0.txt", false},
+		{"/_module/.region3/.project2-1/readme.txt", false},
+	}
+
+	tempDir := t.TempDir()
+	source := filepath.Join(tempDir, "source")
+	destination := filepath.Join(tempDir, "destination")
+
+	fileContent := []byte("source file")
+	for _, tt := range testCases {
+		path := filepath.Join(source, tt.path)
+		assert.NoError(t, os.MkdirAll(filepath.Dir(path), os.ModePerm))
+		assert.NoError(t, os.WriteFile(path, fileContent, 0644))
+	}
+
+	require.NoError(t, util.CopyFolderContents(log.New(), source, destination, ".terragrunt-test", includeInCopy, excludeFromCopy))
+
+	for i, tt := range testCases {
 		tt := tt
 
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
@@ -398,4 +489,177 @@ func TestEmptyDir(t *testing.T) {
 			assert.Equal(t, tt.expectEmpty, emptyValue, "For path %s", tt.path)
 		})
 	}
+}
+
+//nolint:funlen
+func TestWalkWithSimpleSymlinks(t *testing.T) {
+	t.Parallel()
+	// Create temporary test directory structure
+	tempDir := t.TempDir()
+	tempDir, err := filepath.EvalSymlinks(tempDir)
+	require.NoError(t, err)
+
+	// Create directories
+	dirs := []string{"a", "d"}
+	for _, dir := range dirs {
+		require.NoError(t, os.Mkdir(filepath.Join(tempDir, dir), 0755))
+	}
+
+	// Create test files
+	testFile := filepath.Join(tempDir, "a", "test.txt")
+	require.NoError(t, os.WriteFile(testFile, []byte("test"), 0644))
+
+	// Create symlinks
+	require.NoError(t, os.Symlink(filepath.Join(tempDir, "a"), filepath.Join(tempDir, "b")))
+	require.NoError(t, os.Symlink(filepath.Join(tempDir, "a"), filepath.Join(tempDir, "c")))
+	require.NoError(t, os.Symlink(filepath.Join(tempDir, "a"), filepath.Join(tempDir, "d", "a")))
+
+	var paths []string
+	err = util.WalkWithSymlinks(tempDir, func(path string, _ os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		relPath, err := filepath.Rel(tempDir, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, relPath)
+
+		return nil
+	})
+	require.NoError(t, err)
+
+	// Sort paths for reliable comparison
+	sort.Strings(paths)
+
+	// Expected paths should include original and symlinked locations
+	expectedPaths := []string{
+		".",
+		"a",
+		"a/test.txt",
+		"b",
+		"b/test.txt",
+		"c",
+		"c/test.txt",
+		"d",
+		"d/a",
+		"d/a/test.txt",
+	}
+	sort.Strings(expectedPaths)
+
+	if len(paths) != len(expectedPaths) {
+		t.Errorf("Got %d paths, expected %d", len(paths), len(expectedPaths))
+	}
+
+	for expectedPath := range expectedPaths {
+		if expectedPath >= len(paths) {
+			t.Errorf("Missing expected path: %s", expectedPaths[expectedPath])
+
+			continue
+		}
+		if paths[expectedPath] != expectedPaths[expectedPath] {
+			t.Errorf("Path mismatch at index %d:\ngot:  %s\nwant: %s", expectedPath, paths[expectedPath], expectedPaths[expectedPath])
+		}
+	}
+}
+
+//nolint:funlen
+func TestWalkWithCircularSymlinks(t *testing.T) {
+	t.Parallel()
+	// Create temporary test directory structure
+	tempDir := t.TempDir()
+	tempDir, err := filepath.EvalSymlinks(tempDir)
+	require.NoError(t, err)
+
+	// Create directories
+	dirs := []string{"a", "b", "c", "d"}
+	for _, dir := range dirs {
+		require.NoError(t, os.Mkdir(filepath.Join(tempDir, dir), 0755))
+	}
+
+	// Create test files
+	testFile := filepath.Join(tempDir, "a", "test.txt")
+	require.NoError(t, os.WriteFile(testFile, []byte("test"), 0644))
+
+	// Create symlinks
+	require.NoError(t, os.Symlink(filepath.Join(tempDir, "a"), filepath.Join(tempDir, "b", "link-to-a")))
+	require.NoError(t, os.Symlink(filepath.Join(tempDir, "a"), filepath.Join(tempDir, "c", "another-link-to-a")))
+
+	// Create circular symlink
+	require.NoError(t, os.Symlink(filepath.Join(tempDir, "d"), filepath.Join(tempDir, "a", "link-to-d")))
+	require.NoError(t, os.Symlink(filepath.Join(tempDir, "a"), filepath.Join(tempDir, "d", "link-to-a")))
+
+	var paths []string
+	err = util.WalkWithSymlinks(tempDir, func(path string, _ os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		relPath, err := filepath.Rel(tempDir, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, relPath)
+
+		return nil
+	})
+	require.NoError(t, err)
+
+	// Sort paths for reliable comparison
+	sort.Strings(paths)
+
+	// Expected paths should include original and symlinked locations
+	expectedPaths := []string{
+		".",
+		"a",
+		"a/link-to-d",
+		"a/link-to-d/link-to-a",
+		"a/link-to-d/link-to-a/link-to-d",
+		"a/link-to-d/link-to-a/test.txt",
+		"a/test.txt",
+		"b",
+		"b/link-to-a",
+		"b/link-to-a/link-to-d",
+		"b/link-to-a/test.txt",
+		"c",
+		"c/another-link-to-a",
+		"c/another-link-to-a/link-to-d",
+		"c/another-link-to-a/test.txt",
+		"d",
+		"d/link-to-a",
+	}
+	sort.Strings(expectedPaths)
+
+	if len(paths) != len(expectedPaths) {
+		t.Errorf("Got %d paths, expected %d", len(paths), len(expectedPaths))
+	}
+
+	for expectedPath := range expectedPaths {
+		if expectedPath >= len(paths) {
+			t.Errorf("Missing expected path: %s", expectedPaths[expectedPath])
+
+			continue
+		}
+		if paths[expectedPath] != expectedPaths[expectedPath] {
+			t.Errorf("Path mismatch at index %d:\ngot:  %s\nwant: %s", expectedPath, paths[expectedPath], expectedPaths[expectedPath])
+		}
+	}
+}
+
+func TestWalkWithSymlinksErrors(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+
+	// Test with non-existent directory
+	require.Error(t, util.WalkWithSymlinks(filepath.Join(tempDir, "nonexistent"), func(_ string, _ os.FileInfo, err error) error {
+		return err
+	}))
+
+	// Test with broken symlink
+	brokenLink := filepath.Join(tempDir, "broken")
+	require.NoError(t, os.Symlink(filepath.Join(tempDir, "nonexistent"), brokenLink))
+
+	require.Error(t, util.WalkWithSymlinks(tempDir, func(_ string, _ os.FileInfo, err error) error {
+		return err
+	}))
 }

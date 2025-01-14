@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/gruntwork-io/go-commons/errors"
+	"github.com/gruntwork-io/terragrunt/internal/errors"
 	"github.com/urfave/cli/v2"
 )
 
@@ -63,6 +63,7 @@ func (cmd *Command) HasName(name string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -82,12 +83,13 @@ func (cmd *Command) VisibleFlags() Flags {
 	return cmd.Flags
 }
 
-// VisibleSubCommands returns a slice of the Commands with Hidden=false.
+// VisibleSubcommands returns a slice of the Commands with Hidden=false.
 // Used by `urfave/cli` package to generate help.
 func (cmd Command) VisibleSubcommands() []*cli.Command {
 	if cmd.Subcommands == nil {
 		return nil
 	}
+
 	return cmd.Subcommands.VisibleCommands()
 }
 
@@ -116,19 +118,19 @@ func (cmd *Command) Run(ctx *Context, args Args) (err error) {
 	}
 
 	if err := cmd.Flags.RunActions(ctx); err != nil {
-		return ctx.App.handleExitCoder(err)
+		return ctx.App.handleExitCoder(ctx, err)
 	}
 
 	defer func() {
 		if cmd.After != nil && err == nil {
 			err = cmd.After(ctx)
-			err = ctx.App.handleExitCoder(err)
+			err = ctx.App.handleExitCoder(ctx, err)
 		}
 	}()
 
 	if cmd.Before != nil {
 		if err := cmd.Before(ctx); err != nil {
-			return ctx.App.handleExitCoder(err)
+			return ctx.App.handleExitCoder(ctx, err)
 		}
 	}
 
@@ -143,7 +145,7 @@ func (cmd *Command) Run(ctx *Context, args Args) (err error) {
 
 	if cmd.Action != nil {
 		if err = cmd.Action(ctx); err != nil {
-			return ctx.App.handleExitCoder(err)
+			return ctx.App.handleExitCoder(ctx, err)
 		}
 	}
 
@@ -207,15 +209,18 @@ func (cmd *Command) flagSetParse(flagSet *libflag.FlagSet, args []string) ([]str
 
 		// check if the error is due to an undefArgs flag
 		var undefArg string
+
 		errStr := err.Error()
+
 		if cmd.DisallowUndefinedFlags || !strings.HasPrefix(errStr, errFlagUndefined) {
-			return nil, errors.WithStackTrace(err)
+			return nil, errors.New(err)
 		}
 
 		undefArg = strings.Trim(strings.TrimPrefix(errStr, errFlagUndefined), " -")
 
 		// cut off the args
 		var notFoundMatch bool
+
 		for i, arg := range args {
 			// `--var=input=from_env` trims to `var`
 			trimmed := strings.SplitN(strings.Trim(arg, "-"), "=", 2)[0] //nolint:mnd
@@ -223,9 +228,9 @@ func (cmd *Command) flagSetParse(flagSet *libflag.FlagSet, args []string) ([]str
 				undefArgs = append(undefArgs, arg)
 				notFoundMatch = true
 				args = args[i+1:]
+
 				break
 			}
-
 		}
 
 		// This should be an impossible to reach code path, but in case the arg
@@ -236,6 +241,7 @@ func (cmd *Command) flagSetParse(flagSet *libflag.FlagSet, args []string) ([]str
 	}
 
 	undefArgs = append(undefArgs, flagSet.Args()...)
+
 	return undefArgs, nil
 }
 

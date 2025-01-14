@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gruntwork-io/go-commons/errors"
+	"github.com/gruntwork-io/terragrunt/internal/errors"
 	"github.com/gruntwork-io/terragrunt/terraform/cache/models"
 	"github.com/gruntwork-io/terragrunt/terraform/cache/router"
 	"github.com/gruntwork-io/terragrunt/terraform/cache/services"
@@ -18,15 +18,13 @@ import (
 type ProviderFilesystemMirrorHandler struct {
 	*CommonProviderHandler
 
-	providerService             *services.ProviderService
 	cacheProviderHTTPStatusCode int
 	filesystemMirrorPath        string
 }
 
 func NewProviderFilesystemMirrorHandler(providerService *services.ProviderService, cacheProviderHTTPStatusCode int, method *cliconfig.ProviderInstallationFilesystemMirror) ProviderHandler {
 	return &ProviderFilesystemMirrorHandler{
-		CommonProviderHandler:       NewCommonProviderHandler(method.Include, method.Exclude),
-		providerService:             providerService,
+		CommonProviderHandler:       NewCommonProviderHandler(providerService, method.Include, method.Exclude),
 		cacheProviderHTTPStatusCode: cacheProviderHTTPStatusCode,
 		filesystemMirrorPath:        method.Path,
 	}
@@ -99,6 +97,7 @@ func (handler *ProviderFilesystemMirrorHandler) GetPlatform(ctx echo.Context, pr
 
 	// start caching and return 423 status
 	handler.providerService.CacheProvider(ctx.Request().Context(), cacheRequestID, provider)
+
 	return ctx.NoContent(handler.cacheProviderHTTPStatusCode)
 }
 
@@ -112,11 +111,11 @@ func (handler *ProviderFilesystemMirrorHandler) readMirrorData(filename string, 
 
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		return errors.WithStackTrace(err)
+		return errors.New(err)
 	}
 
 	if err := json.Unmarshal(data, value); err != nil {
-		return errors.WithStackTrace(err)
+		return errors.New(err)
 	}
 
 	return nil

@@ -5,12 +5,10 @@ category: getting-started
 excerpt: >-
   Learn how to configure Terragrunt.
 tags: ["config", "formatting"]
-order: 104
+order: 105
 nav_title: Documentation
 nav_title_link: /docs/
 ---
-
-## Terragrunt configuration file
 
 Terragrunt configuration is defined in a `terragrunt.hcl` file. This uses the same HCL syntax as OpenTofu/Terraform itself.
 
@@ -18,7 +16,7 @@ Here’s an example:
 
 ``` hcl
 include "root" {
-  path = find_in_parent_folders()
+  path = find_in_parent_folders("root.hcl")
 }
 
 dependencies {
@@ -47,7 +45,7 @@ Refer to the following pages for a complete reference of supported features in t
 
 ## Configuration parsing order
 
-It is important to be aware of the terragrunt configuration parsing order when using features like [locals]({{site.baseurl}}/docs/features/locals/#locals) and [dependency outputs]({{site.baseurl}}/docs/features/execute-terraform-commands-on-multiple-modules-at-once/#passing-outputs-between-modules), where you can reference attributes of other blocks in the config in your `inputs`. For example, because `locals` are evaluated before `dependency` blocks, you can not bind outputs from `dependency` into `locals`. On the other hand, for the same reason, you can use `locals` in the `dependency` blocks.
+It is important to be aware of the terragrunt configuration parsing order when using features like [locals]({{site.baseurl}}/docs/features/locals/#locals) and [dependency outputs]({{site.baseurl}}/docs/features/stacks#passing-outputs-between-units), where you can reference attributes of other blocks in the config in your `inputs`. For example, because `locals` are evaluated before `dependency` blocks, you can not bind outputs from `dependency` into `locals`. On the other hand, for the same reason, you can use `locals` in the `dependency` blocks.
 
 Currently terragrunt parses the config in the following order:
 
@@ -59,7 +57,7 @@ Currently terragrunt parses the config in the following order:
 
 4. `dependencies` block
 
-5. `dependency` blocks, including calling `terragrunt output` on the dependent modules to retrieve the outputs
+5. `dependency` blocks, including calling `terragrunt output` on the dependent units to retrieve the outputs
 
 6. Everything else
 
@@ -81,15 +79,15 @@ Note that the parsing order is slightly different when using the `-all` flavors 
 
 5. `dependencies` block of all configurations in the tree
 
-The results of this pass are then used to build the dependency graph of the modules in the tree. Once the graph is constructed, Terragrunt will loop through the modules and run the specified command. It will then revert to the single configuration parsing order specified above for each module as it runs the command.
+The results of this pass are then used to build the dependency graph of the units in the stack. Once the graph is constructed, Terragrunt will loop through the units and run the specified command. It will then revert to the single configuration parsing order specified above for each unit as it runs the command.
 
-This allows Terragrunt to avoid resolving `dependency` on modules that haven’t been applied yet when doing a clean deployment from scratch with `run-all apply`.
+This allows Terragrunt to avoid resolving `dependency` on units that haven’t been applied yet when doing a clean deployment from scratch with `run-all apply`.
 
-## Formatting hcl files
+## Formatting HCL files
 
-You can rewrite the hcl files to a canonical format using the `hclfmt` command built into `terragrunt`. Similar to `terraform fmt`, this command applies a subset of [the OpenTofu/Terraform language style conventions](https://www.terraform.io/docs/configuration/style.html), along with other minor adjustments for readability.
+You can rewrite the HCL files to a canonical format using the `hclfmt` command built into `terragrunt`. Similar to `tofu fmt`, this command applies a subset of [the OpenTofu/Terraform language style conventions](https://www.terraform.io/docs/configuration/style.html), along with other minor adjustments for readability.
 
-This command will recursively search for hcl files and format all of them under a given directory tree. Consider the following file structure:
+By default, this command will recursively search for hcl files and format all of them under a given directory tree. Consider the following file structure:
 
 ```tree
 root
@@ -120,6 +118,12 @@ If you run `terragrunt hclfmt` at the `root`, this will update:
 
 - `root/qa/services/service01/terragrunt.hcl`
 
-You can set `--terragrunt-diff` option. `terragrunt hclfmt --terragrunt-check` will output diff in unified format which can be redirected to your favourite diff tool. `diff` utility must be presented in PATH.
+You can set `--terragrunt-diff` option. `terragrunt hclfmt --terragrunt-diff` will output the diff in a unified format which can be redirected to your favourite diff tool. `diff` utility must be presented in PATH.
 
-Additionally, there’s a flag `--terragrunt-check`. `terragrunt hclfmt --terragrunt-check` will only verify if the files are correctly formatted **without rewriting** them. The command will return exit status 1 if any matching files are improperly formatted, or 0 if all matching .hcl files are correctly formatted.
+Additionally, there’s a flag `--terragrunt-check`. `terragrunt hclfmt --terragrunt-check` will only verify if the files are correctly formatted **without rewriting** them. The command will return exit status 1 if any matching files are improperly formatted, or 0 if all matching `.hcl` files are correctly formatted.
+
+You can exclude directories from the formatting process by using the `--terragrunt-hclfmt-exclude-dir` flag. For example, `terragrunt hclfmt --terragrunt-hclfmt-exclude-dir=qa/services`.
+
+If you want to format a single file, you can use the `--terragrunt-hclfmt-file` flag. For example, `terragrunt hclfmt --terragrunt-hclfmt-file qa/services/services.hcl`.
+
+If you want to format HCL from stdin and print the result to stdout, you can use the `--terragrunt-hclfmt-stdin` flag. For example, `echo 'module "foo" {}' | terragrunt hclfmt --terragrunt-hclfmt-stdin`.

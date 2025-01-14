@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gruntwork-io/go-commons/errors"
+	"github.com/gruntwork-io/terragrunt/internal/errors"
 	"github.com/gruntwork-io/terragrunt/internal/view/diagnostic"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/mitchellh/colorstring"
@@ -25,6 +25,7 @@ type HumanRender struct {
 
 func NewHumanRender(disableColor bool) Render {
 	disableColor = disableColor || !term.IsTerminal(int(os.Stderr.Fd()))
+
 	width, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
 		width = defaultWidth
@@ -59,6 +60,7 @@ func (render *HumanRender) Diagnostics(diags diagnostic.Diagnostics) (string, er
 		if err != nil {
 			return "", err
 		}
+
 		if str != "" {
 			buf.WriteString(str)
 			buf.WriteByte('\n')
@@ -81,8 +83,10 @@ func (render *HumanRender) Diagnostic(diag *diagnostic.Diagnostic) (string, erro
 	// asking questions, or including extra content that's not part of the
 	// diagnostic) that some readers have trouble easily identifying which
 	// text belongs to the diagnostic and which does not.
-	var leftRuleLine, leftRuleStart, leftRuleEnd string
-	var leftRuleWidth int // in visual character cells
+	var (
+		leftRuleLine, leftRuleStart, leftRuleEnd string
+		leftRuleWidth                            int // in visual character cells
+	)
 
 	// TODO: Remove lint suppression
 	switch hcl.DiagnosticSeverity(diag.Severity) { //nolint:exhaustive
@@ -108,13 +112,14 @@ func (render *HumanRender) Diagnostic(diag *diagnostic.Diagnostic) (string, erro
 	// this is where we put the text of a native Go error it may not always
 	// be pure text that lends itself well to word-wrapping.
 	if _, err := fmt.Fprintf(&buf, render.colorize.Color("[bold]%s[reset]\n\n"), diag.Summary); err != nil {
-		return "", errors.WithStackTrace(err)
+		return "", errors.New(err)
 	}
 
 	sourceSnippets, err := render.SourceSnippets(diag)
 	if err != nil {
 		return "", err
 	}
+
 	buf.WriteString(sourceSnippets)
 
 	if diag.Detail != "" {
@@ -125,13 +130,14 @@ func (render *HumanRender) Diagnostic(diag *diagnostic.Diagnostic) (string, erro
 				if !strings.HasPrefix(line, " ") {
 					line = wordwrap.WrapString(line, uint(paraWidth))
 				}
+
 				if _, err := fmt.Fprintf(&buf, "%s\n", line); err != nil {
-					return "", errors.WithStackTrace(err)
+					return "", errors.New(err)
 				}
 			}
 		} else {
 			if _, err := fmt.Fprintf(&buf, "%s\n", diag.Detail); err != nil {
-				return "", errors.WithStackTrace(err)
+				return "", errors.New(err)
 			}
 		}
 	}
@@ -141,21 +147,27 @@ func (render *HumanRender) Diagnostic(diag *diagnostic.Diagnostic) (string, erro
 	// around it. We'll do that by scanning over what we already generated
 	// and adding the prefix for each line.
 	var ruleBuf strings.Builder
+
 	sc := bufio.NewScanner(&buf)
+
 	ruleBuf.WriteString(leftRuleStart)
 	ruleBuf.WriteByte('\n')
+
 	for sc.Scan() {
-		line := sc.Text()
 		prefix := leftRuleLine
+
+		line := sc.Text()
 		if line == "" {
 			// Don't print the space after the line if there would be nothing
 			// after it anyway.
 			prefix = strings.TrimSpace(prefix)
 		}
+
 		ruleBuf.WriteString(prefix)
 		ruleBuf.WriteString(line)
 		ruleBuf.WriteByte('\n')
 	}
+
 	ruleBuf.WriteString(leftRuleEnd)
 
 	return ruleBuf.String(), nil
@@ -180,8 +192,9 @@ func (render *HumanRender) SourceSnippets(diag *diagnostic.Diagnostic) (string, 
 	if snippet.Context != "" {
 		contextStr = ", in " + snippet.Context
 	}
+
 	if _, err := fmt.Fprintf(buf, "  on %s line %d%s:\n", diag.Range.Filename, diag.Range.Start.Line, contextStr); err != nil {
-		return "", errors.WithStackTrace(err)
+		return "", errors.New(err)
 	}
 
 	// Split the snippet and render the highlighted section with underlines
@@ -206,6 +219,7 @@ func (render *HumanRender) SourceSnippets(diag *diagnostic.Diagnostic) (string, 
 	} else if start > len(code) {
 		start = len(code)
 	}
+
 	if end < 0 {
 		end = 0
 	} else if end > len(code) {
@@ -223,7 +237,7 @@ func (render *HumanRender) SourceSnippets(diag *diagnostic.Diagnostic) (string, 
 			snippet.StartLine+i,
 			line,
 		); err != nil {
-			return "", errors.WithStackTrace(err)
+			return "", errors.New(err)
 		}
 	}
 
@@ -240,32 +254,39 @@ func (render *HumanRender) SourceSnippets(diag *diagnostic.Diagnostic) (string, 
 		})
 
 		fmt.Fprint(buf, render.colorize.Color("    [dark_gray]├────────────────[reset]\n"))
-		if callInfo := snippet.FunctionCall; callInfo != nil && callInfo.Signature != nil {
 
+		if callInfo := snippet.FunctionCall; callInfo != nil && callInfo.Signature != nil {
 			if _, err := fmt.Fprintf(buf, render.colorize.Color("    [dark_gray]│[reset] while calling [bold]%s[reset]("), callInfo.CalledAs); err != nil {
-				return "", errors.WithStackTrace(err)
+				return "", errors.New(err)
 			}
+
 			for i, param := range callInfo.Signature.Params {
 				if i > 0 {
 					buf.WriteString(", ")
 				}
+
 				buf.WriteString(param.Name)
 			}
+
 			if param := callInfo.Signature.VariadicParam; param != nil {
 				if len(callInfo.Signature.Params) > 0 {
 					buf.WriteString(", ")
 				}
+
 				buf.WriteString(param.Name)
 				buf.WriteString("...")
 			}
+
 			buf.WriteString(")\n")
 		}
+
 		for _, value := range values {
 			if _, err := fmt.Fprintf(buf, render.colorize.Color("    [dark_gray]│[reset] [bold]%s[reset] %s\n"), value.Traversal, value.Statement); err != nil {
-				return "", errors.WithStackTrace(err)
+				return "", errors.New(err)
 			}
 		}
 	}
+
 	buf.WriteByte('\n')
 
 	return buf.String(), nil

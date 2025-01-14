@@ -10,7 +10,9 @@ nav_title: Documentation
 nav_title_link: /docs/
 ---
 
-Terragrunt allows you to use built-in functions anywhere in `terragrunt.hcl`, just like OpenTofu/Terraform\! The functions currently available are:
+Terragrunt allows you to use built-in functions anywhere in `terragrunt.hcl`, just like OpenTofu/Terraform\!
+
+The functions currently available are:
 
 - [OpenTofu/Terraform built-in functions](#opentofuterraform-built-in-functions)
 - [find\_in\_parent\_folders](#find_in_parent_folders)
@@ -29,6 +31,7 @@ Terragrunt allows you to use built-in functions anywhere in `terragrunt.hcl`, ju
 - [get\_terraform\_commands\_that\_need\_input](#get_terraform_commands_that_need_input)
 - [get\_terraform\_commands\_that\_need\_locking](#get_terraform_commands_that_need_locking)
 - [get\_terraform\_commands\_that\_need\_parallelism](#get_terraform_commands_that_need_parallelism)
+- [get\_aws\_account\_alias](#get_aws_account_alias)
 - [get\_aws\_account\_id](#get_aws_account_id)
 - [get\_aws\_caller\_identity\_arn](#get_aws_caller_identity_arn)
 - [get\_terraform\_command](#get_terraform_command)
@@ -40,10 +43,11 @@ Terragrunt allows you to use built-in functions anywhere in `terragrunt.hcl`, ju
 - [sops\_decrypt\_file](#sops_decrypt_file)
 - [get\_terragrunt\_source\_cli\_flag](#get_terragrunt_source_cli_flag)
 - [read\_tfvars\_file](#read_tfvars_file)
+- [mark\_as\_read](#mark_as_read)
 
 ## OpenTofu/Terraform built-in functions
 
-All [OpenTofu/Terraform built-in functions](https://opentofu.org/docs/language/functions/) are supported in Terragrunt config files:
+All [OpenTofu/Terraform built-in functions (as of v0.15.3)](https://opentofu.org/docs/language/functions/) are supported in Terragrunt config files:
 
 ```hcl
 terraform {
@@ -79,23 +83,25 @@ Then `assets.txt` could be read with the following function call:
 file("assets/mysql/assets.txt")
 ```
 
+**Note:**
+
+Terragrunt was originally able to take advantage of built-in OpenTofu/Terraform built-in functions automatically, as they were exposed via an exported package. Since `v0.15.3`, however, these functions are now `internal` to the respective codebases.
+
+As a result, Terragrunt users typically use different functions to resolve the same problems. e.g. Terragrunt users can execute arbitrary shell commands with [run\_cmd](#run_cmd) in whatever language they like instead of using a bespoke HCL function to solve a given problem. In the future, OpenTofu may expose these functions via a public package, which would allow Terragrunt to access them directly. Until such a time, Terragrunt will continue to provide its own set of functions to solve problems relevant to Terragrunt users.
+
+If there is a specific function you would like to see supported directly in Terragrunt, please [open an issue](https://github.com/gruntwork-io/terragrunt/issues) requesting it. Make sure to include the use case you have in mind so we can understand the problem you are trying to solve, and why existing Terragrunt functions are not sufficient.
+
 ## find_in_parent_folders
 
-`find_in_parent_folders()` searches up the directory tree from the current `terragrunt.hcl` file and returns the absolute path to the first `terragrunt.hcl` in a parent folder or exit with an error if no such file is found. This is primarily useful in an `include` block to automatically find the path to a parent `terragrunt.hcl` file:
+`find_in_parent_folders` searches up the directory tree from the current `terragrunt.hcl` file and returns the absolute path to the first file in a parent folder with a given name or exits with an error if no such file is found. This is primarily useful in an `include` block to automatically find the path to a parent Terragrunt configuration:
 
 ```hcl
 include "root" {
-  path = find_in_parent_folders()
+  path = find_in_parent_folders("root.hcl")
 }
 ```
 
-The function takes an optional `name` parameter that allows you to specify a different path to search for:
-
-```hcl
-include "root" {
-  path = find_in_parent_folders("some-other-file-name.hcl")
-}
-```
+The function can also be used to find parent folders.
 
 ```hcl
 include "root" {
@@ -111,18 +117,18 @@ include "root" {
 }
 ```
 
-Note that this function searches relative to the child `terragrunt.hcl` file when called from a parent config. For
+Note that this function searches relative to the `terragrunt.hcl` file when called from a parent config. For
 example, if you had the following folder structure:
 
 ```tree
-    ├── terragrunt.hcl
+    ├── root.hcl
     └── prod
         ├── env.hcl
         └── mysql
             └── terragrunt.hcl
 ```
 
-And the root `terragrunt.hcl` contained the following:
+And the root `root.hcl` contained the following:
 
 ```hcl
 locals {
@@ -133,12 +139,14 @@ locals {
 The `find_in_parent_folders` will search from the **child `terragrunt.hcl`** (`prod/mysql/terragrunt.hcl`) config,
 finding the `env.hcl` file in the `prod` directory.
 
+**NOTE:** This function has undocumented behavior that has since been deprecated. To learn more about this, see the [Migrating from root `terragrunt.hcl`](/docs/migrate/migrating-from-root-terragrunt-hcl) guide.
+
 ## path_relative_to_include
 
 `path_relative_to_include()` returns the relative path between the current `terragrunt.hcl` file and the `path` specified in its `include` block. For example, consider the following folder structure:
 
 ```tree
-├── terragrunt.hcl
+├── root.hcl
 ├── prod
 |   └── mysql
 |       └── terragrunt.hcl
@@ -147,15 +155,15 @@ finding the `env.hcl` file in the `prod` directory.
         └── terragrunt.hcl
 ```
 
-Imagine `prod/mysql/terragrunt.hcl` and `stage/mysql/terragrunt.hcl` include all settings from the root `terragrunt.hcl` file:
+Imagine `prod/mysql/terragrunt.hcl` and `stage/mysql/terragrunt.hcl` include all settings from the root `root.hcl` file:
 
 ```hcl
 include "root" {
-  path = find_in_parent_folders()
+  path = find_in_parent_folders("root.hcl")
 }
 ```
 
-The root `terragrunt.hcl` can use the `path_relative_to_include()` in its `remote_state` configuration to ensure each child stores its remote state at a different `key`:
+The root `root.hcl` can use the `path_relative_to_include()` in its `remote_state` configuration to ensure each child stores its remote state at a different `key`:
 
 ```hcl
 remote_state {
@@ -177,7 +185,7 @@ Example:
 
 ```hcl
 include "root" {
-  path = find_in_parent_folders()
+  path = find_in_parent_folders("root.hcl")
 }
 include "region" {
   path = find_in_parent_folders("region.hcl")
@@ -206,18 +214,18 @@ terraform {
   ├── secrets
   |  └── mysql
   |     └── terragrunt.hcl
-  └── terragrunt.hcl
+  └── root.hcl
 ```
 
-Imagine `terragrunt/mysql/terragrunt.hcl` and `terragrunt/secrets/mysql/terragrunt.hcl` include all settings from the root `terragrunt.hcl` file:
+Imagine `terragrunt/mysql/terragrunt.hcl` and `terragrunt/secrets/mysql/terragrunt.hcl` include all settings from the root `root.hcl` file:
 
 ```hcl
 include "root" {
-  path = find_in_parent_folders()
+  path = find_in_parent_folders("root.hcl")
 }
 ```
 
-The root `terragrunt.hcl` can use the `path_relative_from_include()` in combination with `path_relative_to_include()` in its `source` configuration to retrieve the relative OpenTofu/Terraform source code from the terragrunt configuration file:
+The root `root.hcl` can use the `path_relative_from_include()` in combination with `path_relative_to_include()` in its `source` configuration to retrieve the relative OpenTofu/Terraform source code from the terragrunt configuration file:
 
 ```hcl
 terraform {
@@ -256,7 +264,7 @@ Example:
 
 ```hcl
 include "root" {
-  path = find_in_parent_folders()
+  path = find_in_parent_folders("root.hcl")
 }
 include "region" {
   path = find_in_parent_folders("region.hcl")
@@ -365,7 +373,7 @@ This function will error if the file is not located in a Git repository.
 
 ## get_terragrunt_dir
 
-`get_terragrunt_dir()` returns the directory where the Terragrunt configuration file (by default `terragrunt.hcl`) lives. This is useful when you need to use relative paths with [remote OpenTofu/Terraform configurations]({{site.baseurl}}/docs/features/keep-your-terraform-code-dry/#remote-opentofu-terraform-configurations) and you want those paths relative to your Terragrunt configuration file and not relative to the temporary directory where Terragrunt downloads the code.
+`get_terragrunt_dir()` returns the directory where the Terragrunt configuration file (by default `terragrunt.hcl`) lives. This is useful when you need to use relative paths with [remote OpenTofu/Terraform configurations]({{site.baseurl}}/docs/features/units/#remote-opentofuterraform-modules) and you want those paths relative to your Terragrunt configuration file and not relative to the temporary directory where Terragrunt downloads the code.
 
 For example, imagine you have the following file structure:
 
@@ -428,12 +436,12 @@ terraform {
 
 ## get_parent_terragrunt_dir
 
-`get_parent_terragrunt_dir()` returns the absolute directory where the Terragrunt parent configuration file (by default `terragrunt.hcl`) lives. This is useful when you need to use relative paths with [remote OpenTofu/Terraform configurations]({{site.baseurl}}/docs/features/keep-your-terraform-code-dry/#remote-opentofu-terraform-configurations) and you want those paths relative to your parent Terragrunt configuration file and not relative to the temporary directory where Terragrunt downloads the code.
+`get_parent_terragrunt_dir()` returns the absolute directory where the Terragrunt parent configuration file lives (regardless of what it's called). This is useful when you need to use relative paths with [remote OpenTofu/Terraform configurations]({{site.baseurl}}/docs/features/units/#remote-opentofuterraform-modules) and you want those paths relative to your parent Terragrunt configuration file and not relative to the temporary directory where Terragrunt downloads the code.
 
-This function is very similar to [get_terragrunt_dir()](#get_terragrunt_dir) except it returns the root instead of the leaf of your terragrunt configuration folder.
+This function is very similar to [get_terragrunt_dir()](#get_terragrunt_dir) except it returns the root instead of the leaf of your terragrunt configurations.
 
 ```tree
-├── terragrunt.hcl
+├── root.hcl
 ├── common.tfvars
 ├── app1
 │   └── terragrunt.hcl
@@ -471,7 +479,7 @@ Example:
 
 ```hcl
 include "root" {
-  path = find_in_parent_folders()
+  path = find_in_parent_folders("root.hcl")
 }
 include "region" {
   path = find_in_parent_folders("region.hcl")
@@ -491,7 +499,7 @@ terraform {
 
 ## get_terraform_commands_that_need_vars
 
-`get_terraform_commands_that_need_vars()` returns the list of OpenTofu/Terraform commands that accept `-var` and `-var-file` parameters. This function is used when defining [extra_arguments]({{site.baseurl}}/docs/features/keep-your-cli-flags-dry/#multiple-extra_arguments-blocks).
+`get_terraform_commands_that_need_vars()` returns the list of OpenTofu/Terraform commands that accept `-var` and `-var-file` parameters. This function is used when defining [extra_arguments]({{site.baseurl}}/docs/features/extra-arguments/#multiple-extra_arguments-blocks).
 
 ```hcl
 terraform {
@@ -504,7 +512,7 @@ terraform {
 
 ## get_terraform_commands_that_need_input
 
-`get_terraform_commands_that_need_input()` returns the list of OpenTofu/Terraform commands that accept the `-input=(true or false)` parameter. This function is used when defining [extra_arguments]({{site.baseurl}}/docs/features/keep-your-cli-flags-dry/#multiple-extra_arguments-blocks).
+`get_terraform_commands_that_need_input()` returns the list of OpenTofu/Terraform commands that accept the `-input=(true or false)` parameter. This function is used when defining [extra_arguments]({{site.baseurl}}/docs/features/extra-arguments/#multiple-extra_arguments-blocks).
 
 ```hcl
 terraform {
@@ -518,7 +526,7 @@ terraform {
 
 ## get_terraform_commands_that_need_locking
 
-`get_terraform_commands_that_need_locking()` returns the list of terraform commands that accept the `-lock-timeout` parameter. This function is used when defining [extra_arguments]({{site.baseurl}}/docs/features/keep-your-cli-flags-dry/#multiple-extra_arguments-blocks).
+`get_terraform_commands_that_need_locking()` returns the list of terraform commands that accept the `-lock-timeout` parameter. This function is used when defining [extra_arguments]({{site.baseurl}}/docs/features/extra-arguments/#multiple-extra_arguments-blocks).
 
 ```hcl
 terraform {
@@ -532,7 +540,7 @@ terraform {
 
 ## get_terraform_commands_that_need_parallelism
 
-`get_terraform_commands_that_need_parallelism()` returns the list of terraform commands that accept the `-parallelism` parameter. This function is used when defining [extra_arguments]({{site.baseurl}}/docs/features/keep-your-cli-flags-dry/#multiple-extra_arguments-blocks).
+`get_terraform_commands_that_need_parallelism()` returns the list of terraform commands that accept the `-parallelism` parameter. This function is used when defining [extra_arguments]({{site.baseurl}}/docs/features/extra-arguments/#multiple-extra_arguments-blocks).
 
 ```hcl
 terraform {
@@ -543,6 +551,18 @@ terraform {
   }
 }
 ```
+
+## get_aws_account_alias
+
+`get_aws_account_alias()` returns the AWS account alias associated with the current set of credentials. If the alias cannot be found, it will return an empty string. Example:
+
+```hcl
+inputs = {
+  account_alias = get_aws_account_alias()
+}
+```
+
+**Note:** value returned by `get_aws_account_alias()` can change during parsing of HCL code, for example after evaluation of `iam_role` attribute.
 
 ## get_aws_account_id
 
@@ -859,3 +879,30 @@ remote_state {
   }
 }
 ```
+
+## mark_as_read
+
+`mark_as_read(file_path)` marks a file as read, so that it can be picked up for inclusion by the [queue-include-units-reading](/docs/reference/cli-options/#terragrunt-queue-include-units-reading) flag.
+
+This is useful for situations when you want to mark a file as read, but are not reading it using a native Terragrunt HCL function.
+
+For example:
+
+```hcl
+locals {
+  filename = mark_as_read("file-read-by-tofu.txt")
+}
+
+inputs = {
+  filename = local.filename
+}
+```
+
+By using `mark_as_read` on `file-read-by-tofu.txt`, you can ensure that the `terragrunt.hcl` file passing in the `file-read-by-tofu.txt` file as an input will be included in
+any `run-all` run where the flag `--queue-include-units-reading file-read-by-tofu.txt` is set.
+
+The same technique can be used to mark a file as read when reading a file using code in `run_cmd`, etc.
+
+**NOTE**: Due to the way that Terragrunt parses configurations during a `run-all`, functions will only properly mark files as read
+if they are used in the `locals` block. Reading a file directly in the `inputs` block will not mark the file as read, as the `inputs`
+block is not evaluated until *after* the queue has been populated with units to run.

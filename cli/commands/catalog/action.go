@@ -6,12 +6,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/gruntwork-io/go-commons/errors"
 	"github.com/gruntwork-io/terragrunt/cli/commands/catalog/module"
 	"github.com/gruntwork-io/terragrunt/cli/commands/catalog/tui"
 	"github.com/gruntwork-io/terragrunt/config"
+	"github.com/gruntwork-io/terragrunt/internal/errors"
+	"github.com/gruntwork-io/terragrunt/internal/experiment"
 	"github.com/gruntwork-io/terragrunt/options"
-	"github.com/gruntwork-io/terragrunt/pkg/log"
 	"github.com/gruntwork-io/terragrunt/util"
 )
 
@@ -37,10 +37,13 @@ func Run(ctx context.Context, opts *options.TerragruntOptions, repoURL string) e
 
 	var modules module.Modules
 
+	experiment := opts.Experiments[experiment.Symlinks]
+	walkWithSymlinks := experiment.Evaluate(opts.ExperimentMode)
+
 	for _, repoURL := range repoURLs {
 		tempDir := filepath.Join(os.TempDir(), fmt.Sprintf(tempDirFormat, util.EncodeBase64Sha1(repoURL)))
 
-		repo, err := module.NewRepo(ctx, repoURL, tempDir)
+		repo, err := module.NewRepo(ctx, opts.Logger, repoURL, tempDir, walkWithSymlinks)
 		if err != nil {
 			return err
 		}
@@ -50,7 +53,7 @@ func Run(ctx context.Context, opts *options.TerragruntOptions, repoURL string) e
 			return err
 		}
 
-		log.Infof("Found %d modules in repository %q", len(repoModules), repoURL)
+		opts.Logger.Infof("Found %d modules in repository %q", len(repoModules), repoURL)
 
 		modules = append(modules, repoModules...)
 	}

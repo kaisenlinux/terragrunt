@@ -2,21 +2,19 @@ package util
 
 import (
 	"context"
-	goErrors "errors"
 	"fmt"
 	"time"
 
-	"github.com/gruntwork-io/go-commons/errors"
+	"github.com/gruntwork-io/terragrunt/internal/errors"
 	"github.com/gruntwork-io/terragrunt/pkg/log"
-	"github.com/sirupsen/logrus"
 )
 
 // DoWithRetry runs the specified action. If it returns a value, return that value. If it returns an error, sleep for
 // sleepBetweenRetries and try again, up to a maximum of maxRetries retries. If maxRetries is exceeded, return a
 // MaxRetriesExceeded error.
-func DoWithRetry(ctx context.Context, actionDescription string, maxRetries int, sleepBetweenRetries time.Duration, logLevel logrus.Level, action func(ctx context.Context) error) error {
+func DoWithRetry(ctx context.Context, actionDescription string, maxRetries int, sleepBetweenRetries time.Duration, logger log.Logger, logLevel log.Level, action func(ctx context.Context) error) error {
 	for i := 0; i <= maxRetries; i++ {
-		log.Logf(logLevel, actionDescription)
+		logger.Logf(logLevel, actionDescription)
 
 		err := action(ctx)
 		if err == nil {
@@ -24,22 +22,22 @@ func DoWithRetry(ctx context.Context, actionDescription string, maxRetries int, 
 		}
 
 		var fatalErr FatalError
-		if ok := goErrors.As(err, &fatalErr); ok {
+		if ok := errors.As(err, &fatalErr); ok {
 			return err
 		}
 
 		if ctx.Err() != nil {
-			log.Debugf("%s returned an error: %s.", actionDescription, err.Error())
-			return errors.WithStackTrace(ctx.Err())
+			logger.Debugf("%s returned an error: %s.", actionDescription, err.Error())
+
+			return errors.New(ctx.Err())
 		}
 
-		log.Errorf("%s returned an error: %s. Retry %d of %d. Sleeping for %s and will try again.", actionDescription, err.Error(), i, maxRetries, sleepBetweenRetries)
+		logger.Errorf("%s returned an error: %s. Retry %d of %d. Sleeping for %s and will try again.", actionDescription, err.Error(), i, maxRetries, sleepBetweenRetries)
 
 		select {
+		case <-time.After(sleepBetweenRetries): // Try again
 		case <-ctx.Done():
-			return errors.WithStackTrace(ctx.Err())
-		case <-time.After(sleepBetweenRetries):
-			// try again
+			return errors.New(ctx.Err())
 		}
 	}
 

@@ -1,7 +1,7 @@
 //go:build windows
 // +build windows
 
-package integration_test
+package test_test
 
 import (
 	"bytes"
@@ -12,29 +12,32 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gruntwork-io/terragrunt/test/helpers"
 	"github.com/gruntwork-io/terragrunt/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 const (
-	TEST_FIXTURE_LOCAL_RELATIVE_ARGS_WINDOWS_DOWNLOAD_PATH = "fixture-download/local-relative-extra-args-windows"
-	TEST_FIXTURE_MANIFEST_REMOVAL                          = "fixture-manifest-removal"
-	TEST_FIXTURE_FIND_PARENT                               = "fixture-find-parent"
+	testFixtureDownloadPath                         = "fixtures/download"
+	testFixtureLocalRelativeArgsWindowsDownloadPath = "fixtures/download/local-windows"
+	testFixtureManifestRemoval                      = "fixtures/manifest-removal"
+	testFixtureTflintNoIssuesFound                  = "fixtures/tflint/no-issues-found"
 )
 
 func TestWindowsLocalWithRelativeExtraArgsWindows(t *testing.T) {
 	t.Parallel()
 
-	cleanupTerraformFolder(t, TEST_FIXTURE_LOCAL_RELATIVE_ARGS_WINDOWS_DOWNLOAD_PATH)
+	rootPath := helpers.CopyEnvironment(t, testFixtureDownloadPath)
+	modulePath := util.JoinPath(rootPath, testFixtureLocalRelativeArgsWindowsDownloadPath)
 
-	runTerragrunt(t, fmt.Sprintf("terragrunt apply -auto-approve --terragrunt-non-interactive --terragrunt-working-dir %s", TEST_FIXTURE_LOCAL_RELATIVE_ARGS_WINDOWS_DOWNLOAD_PATH))
+	helpers.RunTerragrunt(t, fmt.Sprintf("terragrunt apply -auto-approve --terragrunt-non-interactive --terragrunt-working-dir %s", modulePath))
 
 	// Run a second time to make sure the temporary folder can be reused without errors
-	runTerragrunt(t, fmt.Sprintf("terragrunt apply -auto-approve --terragrunt-non-interactive --terragrunt-working-dir %s", TEST_FIXTURE_LOCAL_RELATIVE_ARGS_WINDOWS_DOWNLOAD_PATH))
+	helpers.RunTerragrunt(t, fmt.Sprintf("terragrunt apply -auto-approve --terragrunt-non-interactive --terragrunt-working-dir %s", modulePath))
 }
 
-// TestWindowsTerragruntSourceMapDebug copies the test/fixture-source-map directory to a new Windows path
+// TestWindowsTerragruntSourceMapDebug copies the test/fixtures/source-map directory to a new Windows path
 // and then ensures that the TERRAGRUNT_SOURCE_MAP env var can be used to swap out git sources for local modules
 func TestWindowsTerragruntSourceMapDebug(t *testing.T) {
 	testCases := []struct {
@@ -50,10 +53,10 @@ func TestWindowsTerragruntSourceMapDebug(t *testing.T) {
 	for _, testCase := range testCases {
 		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
-			fixtureSourceMapPath := "fixture-source-map"
-			cleanupTerraformFolder(t, fixtureSourceMapPath)
+			fixtureSourceMapPath := "fixtures/source-map"
+			helpers.CleanupTerraformFolder(t, fixtureSourceMapPath)
 			targetPath := "C:\\test\\infrastructure-modules/"
-			copyEnvironmentToPath(t, fixtureSourceMapPath, targetPath)
+			CopyEnvironmentToPath(t, fixtureSourceMapPath, targetPath)
 			rootPath := filepath.Join(targetPath, fixtureSourceMapPath)
 
 			t.Setenv(
@@ -67,8 +70,8 @@ func TestWindowsTerragruntSourceMapDebug(t *testing.T) {
 				),
 			)
 			tgPath := filepath.Join(rootPath, testCase.name)
-			tgArgs := fmt.Sprintf("terragrunt run-all apply -auto-approve --terragrunt-log-level debug --terragrunt-non-interactive --terragrunt-working-dir %s", tgPath)
-			runTerragrunt(t, tgArgs)
+			tgArgs := fmt.Sprintf("terragrunt run-all apply -auto-approve --terragrunt-log-level trace --terragrunt-non-interactive --terragrunt-working-dir %s", tgPath)
+			helpers.RunTerragrunt(t, tgArgs)
 		})
 	}
 }
@@ -76,9 +79,9 @@ func TestWindowsTerragruntSourceMapDebug(t *testing.T) {
 func TestWindowsTflintIsInvoked(t *testing.T) {
 	out := new(bytes.Buffer)
 	errOut := new(bytes.Buffer)
-	rootPath := copyEnvironmentWithTflint(t, TEST_FIXTURE_TFLINT_NO_ISSUES_FOUND)
-	modulePath := util.JoinPath(rootPath, TEST_FIXTURE_TFLINT_NO_ISSUES_FOUND)
-	err := runTerragruntCommand(t, fmt.Sprintf("terragrunt plan --terragrunt-log-level debug --terragrunt-working-dir %s", modulePath), out, errOut)
+	rootPath := CopyEnvironmentWithTflint(t, testFixtureTflintNoIssuesFound)
+	modulePath := util.JoinPath(rootPath, testFixtureTflintNoIssuesFound)
+	err := helpers.RunTerragruntCommand(t, fmt.Sprintf("terragrunt plan --terragrunt-log-level trace --terragrunt-working-dir %s", modulePath), out, errOut)
 	assert.NoError(t, err)
 
 	assert.NotContains(t, errOut.String(), "Error while running tflint with args:")
@@ -92,9 +95,9 @@ func TestWindowsTflintIsInvoked(t *testing.T) {
 func TestWindowsManifestFileIsRemoved(t *testing.T) {
 	out := new(bytes.Buffer)
 	errOut := new(bytes.Buffer)
-	rootPath := copyEnvironmentWithTflint(t, TEST_FIXTURE_MANIFEST_REMOVAL)
-	modulePath := util.JoinPath(rootPath, TEST_FIXTURE_MANIFEST_REMOVAL, "app")
-	err := runTerragruntCommand(t, fmt.Sprintf("terragrunt plan --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir %s", modulePath), out, errOut)
+	rootPath := CopyEnvironmentWithTflint(t, testFixtureManifestRemoval)
+	modulePath := util.JoinPath(rootPath, testFixtureManifestRemoval, "app")
+	err := helpers.RunTerragruntCommand(t, fmt.Sprintf("terragrunt plan --terragrunt-non-interactive --terragrunt-log-level trace --terragrunt-working-dir %s", modulePath), out, errOut)
 	assert.NoError(t, err)
 
 	info1, err := fileInfo(modulePath, ".terragrunt-module-manifest")
@@ -103,7 +106,7 @@ func TestWindowsManifestFileIsRemoved(t *testing.T) {
 
 	out = new(bytes.Buffer)
 	errOut = new(bytes.Buffer)
-	err = runTerragruntCommand(t, fmt.Sprintf("terragrunt plan --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir %s", modulePath), out, errOut)
+	err = helpers.RunTerragruntCommand(t, fmt.Sprintf("terragrunt plan --terragrunt-non-interactive --terragrunt-log-level trace --terragrunt-working-dir %s", modulePath), out, errOut)
 	assert.NoError(t, err)
 
 	info2, err := fileInfo(modulePath, ".terragrunt-module-manifest")
@@ -135,12 +138,12 @@ func fileInfo(path, fileName string) (*os.FileInfo, error) {
 func TestWindowsFindParent(t *testing.T) {
 	t.Parallel()
 
-	cleanupTerraformFolder(t, TEST_FIXTURE_FIND_PARENT)
+	helpers.CleanupTerraformFolder(t, testFixtureFindParent)
 
-	runTerragrunt(t, fmt.Sprintf("terragrunt run-all plan --terragrunt-non-interactive --terragrunt-working-dir %s", TEST_FIXTURE_FIND_PARENT))
+	helpers.RunTerragrunt(t, fmt.Sprintf("terragrunt run-all plan --terragrunt-non-interactive --terragrunt-working-dir %s", testFixtureFindParent))
 
-	// second run shouldn't fail with find_in_parent_folders() issue
-	runTerragrunt(t, fmt.Sprintf("terragrunt run-all apply -auto-approve --terragrunt-non-interactive --terragrunt-working-dir %s", TEST_FIXTURE_FIND_PARENT))
+	// second run shouldn't fail with find_in_parent_folders("root.hcl") issue
+	helpers.RunTerragrunt(t, fmt.Sprintf("terragrunt run-all apply -auto-approve --terragrunt-non-interactive --terragrunt-working-dir %s", testFixtureFindParent))
 }
 
 func TestWindowsScaffold(t *testing.T) {
@@ -150,7 +153,7 @@ func TestWindowsScaffold(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "terragrunt-test")
 	assert.NoError(t, err)
 
-	runTerragrunt(t, fmt.Sprintf("terragrunt scaffold github.com/gruntwork-io/terragrunt-infrastructure-modules-example//modules/mysql --terragrunt-working-dir %s", tmpDir))
+	helpers.RunTerragrunt(t, fmt.Sprintf("terragrunt scaffold github.com/gruntwork-io/terragrunt-infrastructure-modules-example//modules/mysql --terragrunt-working-dir %s", tmpDir))
 
 	// check that terragrunt.hcl was created
 	_, err = os.Stat(filepath.Join(tmpDir, "terragrunt.hcl"))
@@ -164,23 +167,23 @@ func TestWindowsScaffoldRef(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "terragrunt-test")
 	assert.NoError(t, err)
 
-	runTerragrunt(t, fmt.Sprintf("terragrunt scaffold github.com/gruntwork-io/terragrunt-infrastructure-modules-example//modules/mysql?ref=v0.8.1 --terragrunt-working-dir %s", tmpDir))
+	helpers.RunTerragrunt(t, fmt.Sprintf("terragrunt scaffold github.com/gruntwork-io/terragrunt-infrastructure-modules-example//modules/mysql?ref=v0.8.1 --terragrunt-working-dir %s", tmpDir))
 
 	// check that terragrunt.hcl was created
 	_, err = os.Stat(filepath.Join(tmpDir, "terragrunt.hcl"))
 	assert.NoError(t, err)
 }
 
-func copyEnvironmentToPath(t *testing.T, environmentPath, targetPath string) {
+func CopyEnvironmentToPath(t *testing.T, environmentPath, targetPath string) {
 	if err := os.MkdirAll(targetPath, 0777); err != nil {
 		t.Fatalf("Failed to create temp dir %s due to error %v", targetPath, err)
 	}
 
-	copyErr := util.CopyFolderContents(environmentPath, util.JoinPath(targetPath, environmentPath), ".terragrunt-test", nil)
+	copyErr := util.CopyFolderContents(createLogger(), environmentPath, util.JoinPath(targetPath, environmentPath), ".terragrunt-test", nil, nil)
 	require.NoError(t, copyErr)
 }
 
-func copyEnvironmentWithTflint(t *testing.T, environmentPath string) string {
+func CopyEnvironmentWithTflint(t *testing.T, environmentPath string) string {
 	tmpDir, err := os.MkdirTemp("", "terragrunt-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir due to error: %v", err)
@@ -188,7 +191,7 @@ func copyEnvironmentWithTflint(t *testing.T, environmentPath string) string {
 
 	t.Logf("Copying %s to %s", environmentPath, tmpDir)
 
-	require.NoError(t, util.CopyFolderContents(environmentPath, util.JoinPath(tmpDir, environmentPath), ".terragrunt-test", []string{".tflint.hcl"}))
+	require.NoError(t, util.CopyFolderContents(createLogger(), environmentPath, util.JoinPath(tmpDir, environmentPath), ".terragrunt-test", []string{".tflint.hcl"}, []string{}))
 
 	return tmpDir
 }

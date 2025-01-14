@@ -1,8 +1,7 @@
-package integration_test
+package test_test
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -10,19 +9,34 @@ import (
 	"github.com/gruntwork-io/terragrunt/cli/commands/catalog/tui/command"
 	"github.com/gruntwork-io/terragrunt/config"
 	"github.com/gruntwork-io/terragrunt/options"
+	"github.com/gruntwork-io/terragrunt/pkg/log"
+	"github.com/gruntwork-io/terragrunt/test/helpers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCatalogGitRepoUpdate(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	tempDir := t.TempDir()
+
+	_, err := module.NewRepo(ctx, log.New(), "github.com/gruntwork-io/terraform-fake-modules.git", tempDir, false)
+	require.NoError(t, err)
+
+	_, err = module.NewRepo(ctx, log.New(), "github.com/gruntwork-io/terraform-fake-modules.git", tempDir, false)
+	require.NoError(t, err)
+}
 
 func TestScaffoldGitRepo(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 
-	tempDir, err := os.MkdirTemp("", "catalog-*")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 
-	repo, err := module.NewRepo(ctx, "github.com/gruntwork-io/terraform-fake-modules.git", tempDir)
+	repo, err := module.NewRepo(ctx, log.New(), "github.com/gruntwork-io/terraform-fake-modules.git", tempDir, false)
 	require.NoError(t, err)
 
 	modules, err := repo.FindModules(ctx)
@@ -35,10 +49,9 @@ func TestScaffoldGitModule(t *testing.T) {
 
 	ctx := context.Background()
 
-	tempDir, err := os.MkdirTemp("", "catalog-*")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 
-	repo, err := module.NewRepo(ctx, "https://github.com/gruntwork-io/terraform-fake-modules.git", tempDir)
+	repo, err := module.NewRepo(ctx, log.New(), "https://github.com/gruntwork-io/terraform-fake-modules.git", tempDir, false)
 	require.NoError(t, err)
 
 	modules, err := repo.FindModules(ctx)
@@ -74,10 +87,9 @@ func TestScaffoldGitModuleHttps(t *testing.T) {
 
 	ctx := context.Background()
 
-	tempDir, err := os.MkdirTemp("", "catalog-*")
-	require.NoError(t, err)
+	tempDir := t.TempDir()
 
-	repo, err := module.NewRepo(ctx, "https://github.com/gruntwork-io/terraform-fake-modules", tempDir)
+	repo, err := module.NewRepo(ctx, log.New(), "https://github.com/gruntwork-io/terraform-fake-modules", tempDir, false)
 	require.NoError(t, err)
 
 	modules, err := repo.FindModules(ctx)
@@ -107,10 +119,12 @@ func TestScaffoldGitModuleHttps(t *testing.T) {
 	assert.True(t, found)
 	assert.Contains(t, *cfg.Terraform.Source, "git::https://github.com/gruntwork-io/terraform-fake-modules.git//modules/aws/aurora?ref=v0.0.5")
 
-	runTerragrunt(t, "terragrunt init --terragrunt-non-interactive --terragrunt-working-dir "+opts.WorkingDir)
+	helpers.RunTerragrunt(t, "terragrunt init --terragrunt-non-interactive --terragrunt-working-dir "+opts.WorkingDir)
 }
 
 func readConfig(t *testing.T, opts *options.TerragruntOptions) *config.TerragruntConfig {
+	t.Helper()
+
 	assert.FileExists(t, opts.WorkingDir+"/terragrunt.hcl")
 
 	opts, err := options.NewTerragruntOptionsForTest(filepath.Join(opts.WorkingDir, "terragrunt.hcl"))

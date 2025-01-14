@@ -1,57 +1,70 @@
 package main
 
 import (
-	goErrors "errors"
+	"context"
 	"os"
-	"strings"
 
-	"github.com/gruntwork-io/go-commons/errors"
 	"github.com/gruntwork-io/terragrunt/cli"
+	"github.com/gruntwork-io/terragrunt/cli/commands"
+	"github.com/gruntwork-io/terragrunt/internal/errors"
+	"github.com/gruntwork-io/terragrunt/options"
+	"github.com/gruntwork-io/terragrunt/pkg/log"
 	"github.com/gruntwork-io/terragrunt/shell"
 	"github.com/gruntwork-io/terragrunt/util"
-	"github.com/hashicorp/go-multierror"
 )
 
 // The main entrypoint for Terragrunt
 func main() {
-	defer errors.Recover(checkForErrorsAndExit)
+	var exitCode shell.DetailedExitCode
 
-	app := cli.NewApp(os.Stdout, os.Stderr)
-	err := app.Run(os.Args)
+	ctx := context.Background()
+	ctx = shell.ContextWithDetailedExitCode(ctx, &exitCode)
 
-	checkForErrorsAndExit(err)
+	opts := options.NewTerragruntOptions()
+	parseAndSetLogEnvs(opts)
+
+	defer errors.Recover(checkForErrorsAndExit(opts.Logger, exitCode.Get()))
+
+	app := cli.NewApp(opts)
+	err := app.RunContext(ctx, os.Args)
+
+	checkForErrorsAndExit(opts.Logger, exitCode.Get())(err)
 }
 
 // If there is an error, display it in the console and exit with a non-zero exit code. Otherwise, exit 0.
-func checkForErrorsAndExit(err error) {
-	if err == nil {
-		os.Exit(0)
-	} else {
-		util.GlobalFallbackLogEntry.Debugf(printErrorWithStackTrace(err))
-		util.GlobalFallbackLogEntry.Errorf(err.Error())
+func checkForErrorsAndExit(logger log.Logger, exitCode int) func(error) {
+	return func(err error) {
+		if err == nil {
+			os.Exit(exitCode)
+		} else {
+			logger.Error(err.Error())
+			logger.Trace(errors.ErrorStack(err))
 
-		// exit with the underlying error code
-		exitCode, exitCodeErr := util.GetExitCode(err)
-		if exitCodeErr != nil {
-			exitCode = 1
-			util.GlobalFallbackLogEntry.Errorf("Unable to determine underlying exit code, so Terragrunt will exit with error code 1")
+			// exit with the underlying error code
+			exitCoder, exitCodeErr := util.GetExitCode(err)
+			if exitCodeErr != nil {
+				exitCoder = 1
+
+				logger.Errorf("Unable to determine underlying exit code, so Terragrunt will exit with error code 1")
+			}
+
+			if explain := shell.ExplainError(err); len(explain) > 0 {
+				logger.Errorf("Suggested fixes: \n%s", explain)
+			}
+
+			os.Exit(exitCoder)
 		}
-		if explain := shell.ExplainError(err); len(explain) > 0 {
-			util.GlobalFallbackLogEntry.Errorf("Suggested fixes: \n%s", explain)
-		}
-		os.Exit(exitCode)
 	}
 }
 
-func printErrorWithStackTrace(err error) string {
-	var multierror *multierror.Error
-	// if err, ok := err.(*multierror.Error); ok {
-	if goErrors.As(err, &multierror) {
-		var errsStr []string
-		for _, err := range multierror.Errors {
-			errsStr = append(errsStr, errors.PrintErrorWithStackTrace(err))
+func parseAndSetLogEnvs(opts *options.TerragruntOptions) {
+	if levelStr := os.Getenv(commands.TerragruntLogLevelEnvName); levelStr != "" {
+		level, err := log.ParseLevel(levelStr)
+		if err != nil {
+			err := errors.Errorf("Could not parse log level from environment variable %s=%s, %w", commands.TerragruntLogLevelEnvName, levelStr, err)
+			checkForErrorsAndExit(opts.Logger, 0)(err)
 		}
-		return strings.Join(errsStr, "\n")
+
+		opts.Logger.SetOptions(log.WithLevel(level))
 	}
-	return errors.PrintErrorWithStackTrace(err)
 }

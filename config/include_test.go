@@ -14,6 +14,9 @@ import (
 func TestMergeConfigIntoIncludedConfig(t *testing.T) {
 	t.Parallel()
 
+	testTrue := true
+	testFalse := false
+
 	testCases := []struct {
 		config         *config.TerragruntConfig
 		includedConfig *config.TerragruntConfig
@@ -111,18 +114,18 @@ func TestMergeConfigIntoIncludedConfig(t *testing.T) {
 		},
 		{
 			&config.TerragruntConfig{},
-			&config.TerragruntConfig{Skip: true},
-			&config.TerragruntConfig{Skip: false},
+			&config.TerragruntConfig{Skip: &testTrue},
+			&config.TerragruntConfig{Skip: &testTrue},
 		},
 		{
-			&config.TerragruntConfig{Skip: false},
-			&config.TerragruntConfig{Skip: true},
-			&config.TerragruntConfig{Skip: false},
+			&config.TerragruntConfig{Skip: &testFalse},
+			&config.TerragruntConfig{Skip: &testTrue},
+			&config.TerragruntConfig{Skip: &testFalse},
 		},
 		{
-			&config.TerragruntConfig{Skip: true},
-			&config.TerragruntConfig{Skip: true},
-			&config.TerragruntConfig{Skip: true},
+			&config.TerragruntConfig{Skip: &testTrue},
+			&config.TerragruntConfig{Skip: &testTrue},
+			&config.TerragruntConfig{Skip: &testTrue},
 		},
 		{
 			&config.TerragruntConfig{IamRole: "role2"},
@@ -144,6 +147,16 @@ func TestMergeConfigIntoIncludedConfig(t *testing.T) {
 			&config.TerragruntConfig{IamWebIdentityToken: "token"},
 			&config.TerragruntConfig{IamWebIdentityToken: "token"},
 		},
+		{
+			&config.TerragruntConfig{Terraform: &config.TerraformConfig{CopyTerraformLockFile: &[]bool{false}[0]}},
+			&config.TerragruntConfig{Terraform: &config.TerraformConfig{IncludeInCopy: &[]string{"abc"}}},
+			&config.TerragruntConfig{Terraform: &config.TerraformConfig{CopyTerraformLockFile: &[]bool{false}[0], IncludeInCopy: &[]string{"abc"}}},
+		},
+		{
+			&config.TerragruntConfig{Terraform: &config.TerraformConfig{CopyTerraformLockFile: &[]bool{false}[0]}},
+			&config.TerragruntConfig{Terraform: &config.TerraformConfig{ExcludeFromCopy: &[]string{"abc"}}},
+			&config.TerragruntConfig{Terraform: &config.TerraformConfig{CopyTerraformLockFile: &[]bool{false}[0], ExcludeFromCopy: &[]string{"abc"}}},
+		},
 	}
 
 	for _, testCase := range testCases {
@@ -160,6 +173,9 @@ func TestMergeConfigIntoIncludedConfig(t *testing.T) {
 
 func TestDeepMergeConfigIntoIncludedConfig(t *testing.T) {
 	t.Parallel()
+
+	testTrue := true
+	testFalse := false
 
 	// The following maps are convenience vars for setting up deep merge map tests
 	overrideMap := map[string]interface{}{
@@ -245,6 +261,25 @@ func TestDeepMergeConfigIntoIncludedConfig(t *testing.T) {
 			&config.TerragruntConfig{IamRole: "bar"},
 			&config.TerragruntConfig{IamRole: "foo"},
 		},
+		// skip related tests
+		{
+			"skip - preserve target",
+			&config.TerragruntConfig{},
+			&config.TerragruntConfig{Skip: &testTrue},
+			&config.TerragruntConfig{Skip: &testTrue},
+		},
+		{
+			"skip - copy source",
+			&config.TerragruntConfig{Skip: &testFalse},
+			&config.TerragruntConfig{Skip: &testTrue},
+			&config.TerragruntConfig{Skip: &testFalse},
+		},
+		{
+			"skip - still copy source",
+			&config.TerragruntConfig{Skip: &testTrue},
+			&config.TerragruntConfig{Skip: &testTrue},
+			&config.TerragruntConfig{Skip: &testTrue},
+		},
 		// Deep merge dependencies
 		{
 			"dependencies",
@@ -287,6 +322,18 @@ func TestDeepMergeConfigIntoIncludedConfig(t *testing.T) {
 			&config.TerragruntConfig{Inputs: overrideMap},
 			&config.TerragruntConfig{Inputs: originalMap},
 			&config.TerragruntConfig{Inputs: mergedMap},
+		},
+		{
+			"terraform copy_terraform_lock_file",
+			&config.TerragruntConfig{Terraform: &config.TerraformConfig{CopyTerraformLockFile: &[]bool{false}[0]}},
+			&config.TerragruntConfig{Terraform: &config.TerraformConfig{IncludeInCopy: &[]string{"abc"}}},
+			&config.TerragruntConfig{Terraform: &config.TerraformConfig{CopyTerraformLockFile: &[]bool{false}[0], IncludeInCopy: &[]string{"abc"}}},
+		},
+		{
+			"terraform copy_terraform_lock_file",
+			&config.TerragruntConfig{Terraform: &config.TerraformConfig{CopyTerraformLockFile: &[]bool{false}[0]}},
+			&config.TerragruntConfig{Terraform: &config.TerraformConfig{ExcludeFromCopy: &[]string{"abc"}}},
+			&config.TerragruntConfig{Terraform: &config.TerraformConfig{CopyTerraformLockFile: &[]bool{false}[0], ExcludeFromCopy: &[]string{"abc"}}},
 		},
 	}
 

@@ -31,10 +31,15 @@ type exitError struct {
 	err      error
 }
 
+func (ee *exitError) Unwrap() error {
+	return ee.err
+}
+
 func (ee *exitError) Error() string {
 	if ee.err == nil {
 		return ""
 	}
+
 	return ee.err.Error()
 }
 
@@ -42,8 +47,15 @@ func (ee *exitError) ExitCode() int {
 	return ee.exitCode
 }
 
+// ExitCoder is the interface checked by `App` and `Command` for a custom exit code
+type ExitCoder interface {
+	error
+	ExitCode() int
+	Unwrap() error
+}
+
 // NewExitError calls Exit to create a new ExitCoder.
-func NewExitError(message interface{}, exitCode int) cli.ExitCoder {
+func NewExitError(message interface{}, exitCode int) ExitCoder {
 	var err error
 
 	if message != nil {
@@ -69,7 +81,7 @@ func NewExitError(message interface{}, exitCode int) cli.ExitCoder {
 // code found, or exit code 1 if no ExitCoder is found.
 //
 // This function is the default error-handling behavior for an App.
-func handleExitCoder(err error, osExiter func(code int)) error {
+func handleExitCoder(_ *Context, err error, osExiter func(code int)) error {
 	if err == nil {
 		return nil
 	}
@@ -79,9 +91,25 @@ func handleExitCoder(err error, osExiter func(code int)) error {
 		if err.Error() != "" {
 			_, _ = fmt.Fprintln(cli.ErrWriter, err)
 		}
+
 		osExiter(exitErr.ExitCode())
+
 		return nil
 	}
 
 	return err
+}
+
+// InvalidValueError is used to wrap errors from `strconv` to make the error message more user friendly.
+type InvalidValueError struct {
+	underlyingError error
+	msg             string
+}
+
+func (err InvalidValueError) Error() string {
+	return err.msg
+}
+
+func (err InvalidValueError) Unwrap() error {
+	return err.underlyingError
 }

@@ -124,11 +124,11 @@ func (err EnvVarNotFoundError) Error() string {
 }
 
 type InvalidEnvParamNameError struct {
-	EnvVarName string
+	EnvName string
 }
 
 func (err InvalidEnvParamNameError) Error() string {
-	return fmt.Sprintf("InvalidEnvParamNameError: Invalid environment variable name - (%s) ", err.EnvVarName)
+	return fmt.Sprintf("InvalidEnvParamNameError: Invalid environment variable name - (%s) ", err.EnvName)
 }
 
 type EmptyStringNotAllowedError string
@@ -145,31 +145,31 @@ func (err TerragruntConfigNotFoundError) Error() string {
 	return fmt.Sprintf("Terragrunt config %s not found", err.Path)
 }
 
-type InvalidSourceUrlError struct {
+type InvalidSourceURLError struct {
 	ModulePath       string
-	ModuleSourceUrl  string
+	ModuleSourceURL  string
 	TerragruntSource string
 }
 
-func (err InvalidSourceUrlError) Error() string {
-	return fmt.Sprintf("The --terragrunt-source parameter is set to '%s', but the source URL in the module at '%s' is invalid: '%s'. Note that the module URL must have a double-slash to separate the repo URL from the path within the repo!", err.TerragruntSource, err.ModulePath, err.ModuleSourceUrl)
+func (err InvalidSourceURLError) Error() string {
+	return fmt.Sprintf("The --terragrunt-source parameter is set to '%s', but the source URL in the module at '%s' is invalid: '%s'. Note that the module URL must have a double-slash to separate the repo URL from the path within the repo!", err.TerragruntSource, err.ModulePath, err.ModuleSourceURL)
 }
 
-type InvalidSourceUrlWithMapError struct {
+type InvalidSourceURLWithMapError struct {
 	ModulePath      string
-	ModuleSourceUrl string
+	ModuleSourceURL string
 }
 
-func (err InvalidSourceUrlWithMapError) Error() string {
-	return fmt.Sprintf("The --terragrunt-source-map parameter was passed in, but the source URL in the module at '%s' is invalid: '%s'. Note that the module URL must have a double-slash to separate the repo URL from the path within the repo!", err.ModulePath, err.ModuleSourceUrl)
+func (err InvalidSourceURLWithMapError) Error() string {
+	return fmt.Sprintf("The --terragrunt-source-map parameter was passed in, but the source URL in the module at '%s' is invalid: '%s'. Note that the module URL must have a double-slash to separate the repo URL from the path within the repo!", err.ModulePath, err.ModuleSourceURL)
 }
 
 type ParsingModulePathError struct {
-	ModuleSourceUrl string
+	ModuleSourceURL string
 }
 
 func (err ParsingModulePathError) Error() string {
-	return fmt.Sprintf("Unable to obtain the module path from the source URL '%s'. Ensure that the URL is in a supported format.", err.ModuleSourceUrl)
+	return fmt.Sprintf("Unable to obtain the module path from the source URL '%s'. Ensure that the URL is in a supported format.", err.ModuleSourceURL)
 }
 
 type InvalidSopsFormatError struct {
@@ -226,15 +226,44 @@ func (err TerragruntOutputListEncodingError) Error() string {
 }
 
 type TerragruntOutputTargetNoOutputs struct {
+	targetName    string
+	targetPath    string
 	targetConfig  string
 	currentConfig string
 }
 
+func (err TerragruntOutputTargetNoOutputs) ExitCode() int {
+	return 1
+}
+
+func (err TerragruntOutputTargetNoOutputs) Unwrap() error {
+	return nil
+}
+
 func (err TerragruntOutputTargetNoOutputs) Error() string {
+	msg := `
+If this dependency is accessed before the outputs are ready (which can happen during the planning phase of an unapplied stack), consider using mock_outputs:
+
+dependency "` + err.targetName + `" {
+    config_path = "` + err.targetPath + `"
+
+    mock_outputs = {
+        ` + err.targetName + `_output = "mock-` + err.targetName + `-output"
+    }
+}
+
+For more info, see:
+https://terragrunt.gruntwork.io/docs/features/stacks/#unapplied-dependency-and-mock-outputs
+
+If you do not require outputs from your dependency, consider using the dependencies block instead:
+https://terragrunt.gruntwork.io/docs/reference/config-blocks-and-attributes/#dependencies
+`
+
 	return fmt.Sprintf(
-		"%s is a dependency of %s but detected no outputs. Either the target module has not been applied yet, or the module has no outputs. If this is expected, set the skip_outputs flag to true on the dependency block.",
+		"%s is a dependency of %s but detected no outputs. Either the target module has not been applied yet, or the module has no outputs.\n%s",
 		err.targetConfig,
 		err.currentConfig,
+		msg,
 	)
 }
 

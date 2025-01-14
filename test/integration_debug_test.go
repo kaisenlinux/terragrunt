@@ -1,4 +1,4 @@
-package integration_test
+package test_test
 
 import (
 	"bytes"
@@ -12,17 +12,16 @@ import (
 
 	"github.com/gruntwork-io/terragrunt/options"
 	"github.com/gruntwork-io/terragrunt/shell"
+	"github.com/gruntwork-io/terragrunt/test/helpers"
 	"github.com/gruntwork-io/terragrunt/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 const (
-	terragruntDebugFile = "terragrunt-debug.tfvars.json"
-
-	fixtureMultiIncludeDependency = "fixture-multiinclude-dependency"
-	fixtureRenderJSON             = "fixture-render-json"
-	fixtureRenderJSONRegression   = "fixture-render-json-regression"
+	fixtureMultiIncludeDependency = "fixtures/multiinclude-dependency"
+	fixtureRenderJSON             = "fixtures/render-json"
+	fixtureRenderJSONRegression   = "fixtures/render-json-regression"
 )
 
 var (
@@ -33,22 +32,22 @@ var (
 func TestDebugGeneratedInputs(t *testing.T) {
 	t.Parallel()
 
-	cleanupTerraformFolder(t, TEST_FIXTURE_INPUTS)
-	tmpEnvPath := copyEnvironment(t, TEST_FIXTURE_INPUTS)
-	rootPath := util.JoinPath(tmpEnvPath, TEST_FIXTURE_INPUTS)
+	helpers.CleanupTerraformFolder(t, testFixtureInputs)
+	tmpEnvPath := helpers.CopyEnvironment(t, testFixtureInputs)
+	rootPath := util.JoinPath(tmpEnvPath, testFixtureInputs)
 
 	stdout := bytes.Buffer{}
 	stderr := bytes.Buffer{}
 
 	require.NoError(
 		t,
-		runTerragruntCommand(t, "terragrunt plan --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-debug --terragrunt-working-dir "+rootPath, &stdout, &stderr),
+		helpers.RunTerragruntCommand(t, "terragrunt plan --terragrunt-non-interactive --terragrunt-log-level trace --terragrunt-debug --terragrunt-working-dir "+rootPath, &stdout, &stderr),
 	)
 
-	debugFile := util.JoinPath(rootPath, terragruntDebugFile)
+	debugFile := util.JoinPath(rootPath, helpers.TerragruntDebugFile)
 	assert.True(t, util.FileExists(debugFile))
 
-	assert.Contains(t, stderr.String(), fmt.Sprintf("-chdir=\"%s\"", rootPath))
+	assert.Contains(t, stderr.String(), fmt.Sprintf("-chdir=\"%s\"", getPathRelativeTo(t, rootPath, rootPath)))
 
 	// If the debug file is generated correctly, we should be able to run terraform apply using the generated var file
 	// without going through terragrunt.
@@ -64,18 +63,18 @@ func TestDebugGeneratedInputs(t *testing.T) {
 	stderr = bytes.Buffer{}
 	require.NoError(
 		t,
-		runTerragruntCommand(t, "terragrunt output -no-color -json --terragrunt-non-interactive --terragrunt-working-dir "+rootPath, &stdout, &stderr),
+		helpers.RunTerragruntCommand(t, "terragrunt output -no-color -json --terragrunt-non-interactive --terragrunt-working-dir "+rootPath, &stdout, &stderr),
 	)
 
-	outputs := map[string]TerraformOutput{}
+	outputs := map[string]helpers.TerraformOutput{}
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &outputs))
 	validateInputs(t, outputs)
 
 	// Also make sure the undefined variable is not included in the json file
-	debugJsonContents, err := os.ReadFile(debugFile)
+	debugJSONContents, err := os.ReadFile(debugFile)
 	require.NoError(t, err)
 	var data map[string]interface{}
-	require.NoError(t, json.Unmarshal(debugJsonContents, &data))
+	require.NoError(t, json.Unmarshal(debugJSONContents, &data))
 	_, isDefined := data["undefined_var"]
 	assert.False(t, isDefined)
 }
@@ -83,17 +82,17 @@ func TestDebugGeneratedInputs(t *testing.T) {
 func TestTerragruntInputsWithDashes(t *testing.T) {
 	t.Parallel()
 
-	cleanupTerraformFolder(t, TEST_FIXTURE_INPUTS)
-	tmpEnvPath := copyEnvironment(t, TEST_FIXTURE_INPUTS)
-	rootPath := util.JoinPath(tmpEnvPath, TEST_FIXTURE_INPUTS)
+	helpers.CleanupTerraformFolder(t, testFixtureInputs)
+	tmpEnvPath := helpers.CopyEnvironment(t, testFixtureInputs)
+	rootPath := util.JoinPath(tmpEnvPath, testFixtureInputs)
 
-	runTerragrunt(t, fmt.Sprintf("terragrunt init --terragrunt-working-dir=%s --terragrunt-log-level=debug", rootPath))
+	helpers.RunTerragrunt(t, fmt.Sprintf("terragrunt init --terragrunt-working-dir=%s --terragrunt-log-level=debug", rootPath))
 }
 
 func TestTerragruntValidateInputs(t *testing.T) {
 	t.Parallel()
 
-	moduleDirs, err := filepath.Glob(filepath.Join("fixture-validate-inputs", "*"))
+	moduleDirs, err := filepath.Glob(filepath.Join("fixtures/validate-inputs", "*"))
 	require.NoError(t, err)
 
 	for _, module := range moduleDirs {
@@ -106,7 +105,7 @@ func TestTerragruntValidateInputs(t *testing.T) {
 			t.Parallel()
 
 			nameDashSplit := strings.Split(name, "-")
-			runTerragruntValidateInputs(t, module, []string{"--terragrunt-strict-validate"}, nameDashSplit[0] == "success")
+			helpers.RunTerragruntValidateInputs(t, module, []string{"--terragrunt-strict-validate"}, nameDashSplit[0] == "success")
 		})
 	}
 }
@@ -114,9 +113,9 @@ func TestTerragruntValidateInputs(t *testing.T) {
 func TestTerragruntValidateInputsWithCLIVars(t *testing.T) {
 	t.Parallel()
 
-	moduleDir := filepath.Join("fixture-validate-inputs", "fail-no-inputs")
+	moduleDir := filepath.Join("fixtures/validate-inputs", "fail-no-inputs")
 	args := []string{"-var=input=from_env"}
-	runTerragruntValidateInputs(t, moduleDir, args, true)
+	helpers.RunTerragruntValidateInputs(t, moduleDir, args, true)
 }
 
 func TestTerragruntValidateInputsWithCLIVarFile(t *testing.T) {
@@ -125,57 +124,57 @@ func TestTerragruntValidateInputsWithCLIVarFile(t *testing.T) {
 	curdir, err := os.Getwd()
 	require.NoError(t, err)
 
-	moduleDir := filepath.Join("fixture-validate-inputs", "fail-no-inputs")
-	args := []string{fmt.Sprintf("-var-file=%s/fixture-validate-inputs/success-var-file/varfiles/main.tfvars", curdir)}
-	runTerragruntValidateInputs(t, moduleDir, args, true)
+	moduleDir := filepath.Join("fixtures/validate-inputs", "fail-no-inputs")
+	args := []string{fmt.Sprintf("-var-file=%s/fixtures/validate-inputs/success-var-file/varfiles/main.tfvars", curdir)}
+	helpers.RunTerragruntValidateInputs(t, moduleDir, args, true)
 }
 
 func TestTerragruntValidateInputsWithStrictMode(t *testing.T) {
 	t.Parallel()
 
-	moduleDir := filepath.Join("fixture-validate-inputs", "success-inputs-only")
+	moduleDir := filepath.Join("fixtures/validate-inputs", "success-inputs-only")
 	args := []string{"--terragrunt-strict-validate"}
-	runTerragruntValidateInputs(t, moduleDir, args, true)
+	helpers.RunTerragruntValidateInputs(t, moduleDir, args, true)
 }
 
 func TestTerragruntValidateInputsWithStrictModeDisabledAndUnusedVar(t *testing.T) {
 	t.Parallel()
 
-	moduleDir := filepath.Join("fixture-validate-inputs", "success-inputs-only")
+	moduleDir := filepath.Join("fixtures/validate-inputs", "success-inputs-only")
 	args := []string{"-var=testvariable=testvalue"}
-	runTerragruntValidateInputs(t, moduleDir, args, true)
+	helpers.RunTerragruntValidateInputs(t, moduleDir, args, true)
 }
 
 func TestTerragruntValidateInputsWithStrictModeEnabledAndUnusedVar(t *testing.T) {
 	t.Parallel()
 
-	moduleDir := filepath.Join("fixture-validate-inputs", "success-inputs-only")
+	moduleDir := filepath.Join("fixtures/validate-inputs", "success-inputs-only")
 	args := []string{"-var=testvariable=testvalue", "--terragrunt-strict-validate"}
-	runTerragruntValidateInputs(t, moduleDir, args, false)
+	helpers.RunTerragruntValidateInputs(t, moduleDir, args, false)
 }
 
 func TestTerragruntValidateInputsWithStrictModeEnabledAndUnusedInputs(t *testing.T) {
 	t.Parallel()
 
-	moduleDir := filepath.Join("fixture-validate-inputs", "fail-unused-inputs")
-	cleanupTerraformFolder(t, moduleDir)
-	tmpEnvPath, _ := filepath.EvalSymlinks(copyEnvironment(t, moduleDir))
+	moduleDir := filepath.Join("fixtures/validate-inputs", "fail-unused-inputs")
+	helpers.CleanupTerraformFolder(t, moduleDir)
+	tmpEnvPath, _ := filepath.EvalSymlinks(helpers.CopyEnvironment(t, moduleDir))
 	rootPath := util.JoinPath(tmpEnvPath, moduleDir)
 
 	args := []string{"--terragrunt-strict-validate"}
-	runTerragruntValidateInputs(t, rootPath, args, false)
+	helpers.RunTerragruntValidateInputs(t, rootPath, args, false)
 }
 
 func TestTerragruntValidateInputsWithStrictModeDisabledAndUnusedInputs(t *testing.T) {
 	t.Parallel()
 
-	moduleDir := filepath.Join("fixture-validate-inputs", "fail-unused-inputs")
-	cleanupTerraformFolder(t, moduleDir)
-	tmpEnvPath, _ := filepath.EvalSymlinks(copyEnvironment(t, moduleDir))
+	moduleDir := filepath.Join("fixtures/validate-inputs", "fail-unused-inputs")
+	helpers.CleanupTerraformFolder(t, moduleDir)
+	tmpEnvPath, _ := filepath.EvalSymlinks(helpers.CopyEnvironment(t, moduleDir))
 	rootPath := util.JoinPath(tmpEnvPath, moduleDir)
 
 	args := []string{}
-	runTerragruntValidateInputs(t, rootPath, args, true)
+	helpers.RunTerragruntValidateInputs(t, rootPath, args, true)
 }
 
 func TestRenderJSONConfig(t *testing.T) {
@@ -186,11 +185,11 @@ func TestRenderJSONConfig(t *testing.T) {
 	jsonOut := filepath.Join(tmpDir, "terragrunt_rendered.json")
 	defer os.RemoveAll(tmpDir)
 
-	cleanupTerraformFolder(t, fixtureRenderJSONMainModulePath)
-	cleanupTerraformFolder(t, fixtureRenderJSONDepModulePath)
+	helpers.CleanupTerraformFolder(t, fixtureRenderJSONMainModulePath)
+	helpers.CleanupTerraformFolder(t, fixtureRenderJSONDepModulePath)
 
-	runTerragrunt(t, "terragrunt run-all apply -auto-approve --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir "+fixtureRenderJSON)
-	runTerragrunt(t, fmt.Sprintf("terragrunt render-json --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir %s --terragrunt-json-out %s", fixtureRenderJSONMainModulePath, jsonOut))
+	helpers.RunTerragrunt(t, "terragrunt run-all apply -auto-approve --terragrunt-non-interactive --terragrunt-log-level trace --terragrunt-working-dir "+fixtureRenderJSON)
+	helpers.RunTerragrunt(t, fmt.Sprintf("terragrunt render-json --terragrunt-non-interactive --terragrunt-log-level trace --terragrunt-working-dir %s --terragrunt-json-out %s", fixtureRenderJSONMainModulePath, jsonOut))
 
 	jsonBytes, err := os.ReadFile(jsonOut)
 	require.NoError(t, err)
@@ -206,8 +205,8 @@ func TestRenderJSONConfig(t *testing.T) {
 		assert.Equal(t, "./module", source)
 	}
 
-	// Make sure included remote_state is rendered out
-	remote_state, hasRemoteState := rendered["remote_state"]
+	// Make sure included remoteState is rendered out
+	remoteState, hasRemoteState := rendered["remote_state"]
 	if assert.True(t, hasRemoteState) {
 		assert.Equal(
 			t,
@@ -223,7 +222,7 @@ func TestRenderJSONConfig(t *testing.T) {
 				"disable_init":                    false,
 				"disable_dependency_optimization": false,
 			},
-			remote_state.(map[string]interface{}),
+			remoteState.(map[string]interface{}),
 		)
 	}
 
@@ -297,12 +296,12 @@ func TestRenderJSONConfigWithIncludesDependenciesAndLocals(t *testing.T) {
 	jsonOut := filepath.Join(tmpDir, "terragrunt_rendered.json")
 	defer os.RemoveAll(tmpDir)
 
-	tmpEnvPath := copyEnvironment(t, fixtureRenderJSONRegression)
+	tmpEnvPath := helpers.CopyEnvironment(t, fixtureRenderJSONRegression)
 	workDir := filepath.Join(tmpEnvPath, fixtureRenderJSONRegression)
 
-	runTerragrunt(t, "terragrunt run-all apply -auto-approve --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir "+workDir)
+	helpers.RunTerragrunt(t, "terragrunt run-all apply -auto-approve --terragrunt-non-interactive --terragrunt-log-level trace --terragrunt-working-dir "+workDir)
 
-	runTerragrunt(t, fmt.Sprintf("terragrunt render-json --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir %s --terragrunt-json-out ", workDir)+jsonOut)
+	helpers.RunTerragrunt(t, fmt.Sprintf("terragrunt render-json --terragrunt-non-interactive --terragrunt-log-level trace --terragrunt-working-dir %s --terragrunt-json-out ", workDir)+jsonOut)
 
 	jsonBytes, err := os.ReadFile(jsonOut)
 	require.NoError(t, err)
@@ -392,7 +391,7 @@ func TestRenderJSONConfigWithIncludesDependenciesAndLocals(t *testing.T) {
 func TestRenderJSONConfigRunAll(t *testing.T) {
 	t.Parallel()
 
-	tmpEnvPath := copyEnvironment(t, fixtureRenderJSONRegression)
+	tmpEnvPath := helpers.CopyEnvironment(t, fixtureRenderJSONRegression)
 	workDir := filepath.Join(tmpEnvPath, fixtureRenderJSONRegression)
 
 	// NOTE: bar is not rendered out because it is considered a parent terragrunt.hcl config.
@@ -403,9 +402,9 @@ func TestRenderJSONConfigRunAll(t *testing.T) {
 	defer os.Remove(bazJSONOut)
 	defer os.Remove(rootChildJSONOut)
 
-	runTerragrunt(t, "terragrunt run-all apply -auto-approve --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir "+workDir)
+	helpers.RunTerragrunt(t, "terragrunt run-all apply -auto-approve --terragrunt-non-interactive --terragrunt-log-level trace --terragrunt-working-dir "+workDir)
 
-	runTerragrunt(t, "terragrunt run-all render-json --terragrunt-non-interactive --terragrunt-log-level debug --terragrunt-working-dir "+workDir)
+	helpers.RunTerragrunt(t, "terragrunt run-all render-json --terragrunt-non-interactive --terragrunt-log-level trace --terragrunt-working-dir "+workDir)
 
 	bazJSONBytes, err := os.ReadFile(bazJSONOut)
 	require.NoError(t, err)
@@ -447,36 +446,19 @@ func TestRenderJSONConfigRunAll(t *testing.T) {
 func TestDependencyGraphWithMultiInclude(t *testing.T) {
 	t.Parallel()
 
-	cleanupTerraformFolder(t, fixtureMultiIncludeDependency)
-	tmpEnvPath := copyEnvironment(t, fixtureMultiIncludeDependency)
+	helpers.CleanupTerraformFolder(t, fixtureMultiIncludeDependency)
+	tmpEnvPath := helpers.CopyEnvironment(t, fixtureMultiIncludeDependency)
 	rootPath := util.JoinPath(tmpEnvPath, fixtureMultiIncludeDependency)
 
 	stdout := bytes.Buffer{}
 	stderr := bytes.Buffer{}
 	require.NoError(
 		t,
-		runTerragruntCommand(t, "terragrunt graph-dependencies --terragrunt-non-interactive --terragrunt-working-dir "+rootPath, &stdout, &stderr),
+		helpers.RunTerragruntCommand(t, "terragrunt graph-dependencies --terragrunt-non-interactive --terragrunt-working-dir "+rootPath, &stdout, &stderr),
 	)
 	stdoutStr := stdout.String()
 
 	assert.Contains(t, stdoutStr, `"main" -> "depa";`)
 	assert.Contains(t, stdoutStr, `"main" -> "depb";`)
 	assert.Contains(t, stdoutStr, `"main" -> "depc";`)
-}
-
-func runTerragruntValidateInputs(t *testing.T, moduleDir string, extraArgs []string, isSuccessTest bool) {
-	maybeNested := filepath.Join(moduleDir, "module")
-	if util.FileExists(maybeNested) {
-		// Nested module test case with included file, so run terragrunt from the nested module.
-		moduleDir = maybeNested
-	}
-
-	cmd := fmt.Sprintf("terragrunt validate-inputs %s --terragrunt-log-level debug --terragrunt-non-interactive --terragrunt-working-dir %s", strings.Join(extraArgs, " "), moduleDir)
-	t.Logf("Command: %s", cmd)
-	_, _, err := runTerragruntCommandWithOutput(t, cmd)
-	if isSuccessTest {
-		require.NoError(t, err)
-	} else {
-		require.Error(t, err)
-	}
 }

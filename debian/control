@@ -2,7 +2,7 @@ Source: terragrunt
 Section: admin
 Priority: optional
 Maintainer: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
-Build-Depends: debhelper-compat (= 13), golang-go (>= 1.22), dh-golang, mockery
+Build-Depends: debhelper-compat (= 13), golang-go (>= 1.23), dh-golang, mockery
 Standards-Version: 4.7.2
 Homepage: https://terragrunt.gruntwork.io/
 Vcs-Browser: https://gitlab.com/kaisenlinux/terragrunt

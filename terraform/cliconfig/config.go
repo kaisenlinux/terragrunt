@@ -1,9 +1,10 @@
+// Package cliconfig provides methods to create an OpenTofu/Terraform CLI configuration file.
 package cliconfig
 
 import (
 	"os"
 
-	"github.com/gruntwork-io/go-commons/errors"
+	"github.com/gruntwork-io/terragrunt/internal/errors"
 	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	svchost "github.com/hashicorp/terraform-svchost"
@@ -97,6 +98,7 @@ func (cfg *Config) AddProviderInstallationMethods(newMethods ...ProviderInstalla
 	if cfg.ProviderInstallation == nil {
 		cfg.ProviderInstallation = &ProviderInstallation{}
 	}
+
 	cfg.ProviderInstallation.Methods = cfg.ProviderInstallation.Methods.Merge(newMethods...)
 }
 
@@ -107,7 +109,7 @@ func (cfg *Config) Save(configPath string) error {
 
 	const ownerWriteGlobalReadPerms = 0644
 	if err := os.WriteFile(configPath, file.Bytes(), os.FileMode(ownerWriteGlobalReadPerms)); err != nil {
-		return errors.WithStackTrace(err)
+		return errors.New(err)
 	}
 
 	return nil
@@ -116,12 +118,14 @@ func (cfg *Config) Save(configPath string) error {
 // CredentialsSource creates and returns a service credentials source whose behavior depends on which "credentials" if are present in the receiving config.
 func (cfg *Config) CredentialsSource() *CredentialsSource {
 	configured := make(map[svchost.Hostname]string)
+
 	for _, creds := range cfg.Credentials {
 		host, err := svchost.ForComparison(creds.Name)
 		if err != nil {
 			// We expect the config was already validated by the time we get here, so we'll just ignore invalid hostnames.
 			continue
 		}
+
 		configured[host] = creds.Token
 	}
 

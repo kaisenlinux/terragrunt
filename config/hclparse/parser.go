@@ -1,16 +1,19 @@
+// Package hclparse provides a wrapper around the HCL2 parser to handle diagnostics and errors in a more user-friendly way.
+//
 // The package wraps `hclparse.Parser` to be able to handle diagnostic errors from one place, see `handleDiagnostics(diags hcl.Diagnostics) error` func.
 // This allows us to halt the process only when certain errors occur, such as skipping all errors not related to the `catalog` block.
-
 package hclparse
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 
-	"github.com/gruntwork-io/go-commons/errors"
+	"github.com/gruntwork-io/terragrunt/internal/errors"
 	"github.com/gruntwork-io/terragrunt/pkg/log"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclparse"
+	"golang.org/x/term"
 )
 
 type Parser struct {
@@ -18,26 +21,30 @@ type Parser struct {
 	diagsWriterFunc       func(hcl.Diagnostics) error
 	handleDiagnosticsFunc func(*File, hcl.Diagnostics) (hcl.Diagnostics, error)
 	fileUpdateHandlerFunc func(*File) error
+	logger                log.Logger
 }
 
-func NewParser() *Parser {
-	return &Parser{
+func NewParser(opts ...Option) *Parser {
+	return (&Parser{
 		Parser: hclparse.NewParser(),
-	}
+		logger: log.Default(),
+	}).withOptions(opts...)
 }
 
-func (parser *Parser) WithOptions(opts ...Option) *Parser {
+func (parser *Parser) withOptions(opts ...Option) *Parser {
 	for _, opt := range opts {
 		parser = opt(parser)
 	}
+
 	return parser
 }
 
 func (parser *Parser) ParseFromFile(configPath string) (*File, error) {
 	content, err := os.ReadFile(configPath)
 	if err != nil {
-		log.Warnf("Error reading file %s: %v", configPath, err)
-		return nil, errors.WithStackTrace(err)
+		parser.logger.Warnf("Error reading file %s: %v", configPath, err)
+
+		return nil, errors.New(err)
 	}
 
 	return parser.ParseFromBytes(content, configPath)
@@ -53,7 +60,7 @@ func (parser *Parser) ParseFromBytes(content []byte, configPath string) (file *F
 	// those panics here and convert them to normal errors
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			err = errors.WithStackTrace(PanicWhileParsingConfigError{RecoveredValue: recovered, ConfigFile: configPath})
+			err = errors.New(PanicWhileParsingConfigError{RecoveredValue: recovered, ConfigFile: configPath})
 		}
 	}()
 
@@ -76,11 +83,24 @@ func (parser *Parser) ParseFromBytes(content []byte, configPath string) (file *F
 	}
 
 	if err := parser.handleDiagnostics(file, diags); err != nil {
-		log.Warnf("Failed to parse HCL in file %s: %v", configPath, diags)
-		return nil, errors.WithStackTrace(diags)
+		parser.logger.Warnf("Failed to parse HCL in file %s: %v", configPath, diags)
+
+		return nil, errors.New(diags)
 	}
 
 	return file, nil
+}
+
+// GetDiagnosticsWriter returns a hcl2 parsing diagnostics emitter for the current terminal.
+func (parser *Parser) GetDiagnosticsWriter(writer io.Writer, disableColor bool) hcl.DiagnosticWriter {
+	termColor := !disableColor && term.IsTerminal(int(os.Stderr.Fd()))
+
+	termWidth, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil {
+		termWidth = 80
+	}
+
+	return hcl.NewDiagnosticTextWriter(writer, parser.Files(), uint(termWidth), termColor)
 }
 
 func (parser *Parser) handleDiagnostics(file *File, diags hcl.Diagnostics) error {

@@ -16,6 +16,12 @@ Please see the following for more info, including install instructions and compl
 * [Contributing to Terragrunt](https://terragrunt.gruntwork.io/docs/community/contributing)
 * [Commercial Support](https://gruntwork.io/support/)
 
+## Join the Discord!
+
+Join our community for discussions, support, and contributions:
+
+[![Discord](https://discord.com/api/guilds/1090098780344422490/widget.png?style=shield)](https://discord.gg/SPu4Degs5f)
+
 ## License
 
 This code is released under the MIT License. See [LICENSE.txt](LICENSE.txt).

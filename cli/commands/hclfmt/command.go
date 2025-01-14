@@ -1,3 +1,4 @@
+// Package hclfmt provides the hclfmt command for formatting HCL files.
 package hclfmt
 
 import (
@@ -8,9 +9,11 @@ import (
 const (
 	CommandName = "hclfmt"
 
-	FlagNameTerragruntHCLFmt = "terragrunt-hclfmt-file"
-	FlagNameTerragruntCheck  = "terragrunt-check"
-	FlagNameTerragruntDiff   = "terragrunt-diff"
+	FlagNameTerragruntHCLFmt           = "terragrunt-hclfmt-file"
+	FlagNameTerragruntHCLFmtExcludeDir = "terragrunt-hclfmt-exclude-dir"
+	FlagNameTerragruntCheck            = "terragrunt-check"
+	FlagNameTerragruntDiff             = "terragrunt-diff"
+	FlagNameTerragruntHCLFmtStdin      = "terragrunt-hclfmt-stdin"
 )
 
 func NewFlags(opts *options.TerragruntOptions) cli.Flags {
@@ -19,6 +22,12 @@ func NewFlags(opts *options.TerragruntOptions) cli.Flags {
 			Name:        FlagNameTerragruntHCLFmt,
 			Destination: &opts.HclFile,
 			Usage:       "The path to a single hcl file that the hclfmt command should run on.",
+		},
+		&cli.SliceFlag[string]{
+			Name:        FlagNameTerragruntHCLFmtExcludeDir,
+			Destination: &opts.HclExclude,
+			EnvVar:      "TERRAGRUNT_HCLFMT_EXCLUDE_DIR",
+			Usage:       "Skip HCL formatting in given directories.",
 		},
 		&cli.BoolFlag{
 			Name:        FlagNameTerragruntCheck,
@@ -31,6 +40,12 @@ func NewFlags(opts *options.TerragruntOptions) cli.Flags {
 			Destination: &opts.Diff,
 			EnvVar:      "TERRAGRUNT_DIFF",
 			Usage:       "Print diff between original and modified file versions when running with 'hclfmt'.",
+		},
+		&cli.BoolFlag{
+			Name:        FlagNameTerragruntHCLFmtStdin,
+			Destination: &opts.HclFromStdin,
+			EnvVar:      "TERRAGRUNT_HCLFMT_STDIN",
+			Usage:       "Format HCL from stdin and print result to stdout.",
 		},
 	}
 }
